@@ -1,6 +1,7 @@
 services:
   postiz:
     image: ghcr.io/gitroomhq/postiz-app:latest
+    entrypoint: ["/app/custom-entrypoint.sh"]
     container_name: postiz
     restart: always
     env_file: .env
@@ -17,8 +18,8 @@ services:
       - postiz-config:/config/
       - postiz-uploads:/uploads/
       # Custom file overrides
-      - ./dist/apps/backend/main.js:/app/dist/apps/backend/main.js
-      - ./apps/frontend/src/app/colors.scss:/app/apps/frontend/src/app/colors.scss
+      - ./custom-entrypoint.sh:/app/custom-entrypoint.sh
+      - ./custom-files:/app/custom-files
     ports:
       - 3001:3000  # Backend API
       - 3002:3001  # Main URL
