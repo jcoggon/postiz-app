@@ -14,16 +14,16 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     rawBody: true,
     cors: {
-      ...(!process.env.NOT_SECURED ? { credentials: true } : {}),
+      origin: [
+        process.env.FRONTEND_URL,
+        ...(process.env.MAIN_URL ? [process.env.MAIN_URL] : []),
+      ],
+      credentials: true,
       exposedHeaders: [
         'reload',
         'onboarding',
         'activate',
         ...(process.env.NOT_SECURED ? ['auth', 'showorg', 'impersonate'] : []),
-      ],
-      origin: [
-        process.env.FRONTEND_URL,
-        ...(process.env.MAIN_URL ? [process.env.MAIN_URL] : []),
       ],
     },
   });
