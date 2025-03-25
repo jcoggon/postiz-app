@@ -35,6 +35,9 @@ VOLUME /uploads
 
 LABEL org.opencontainers.image.source=https://github.com/gitroomhq/postiz-app
 
+# Ensure uploads directory has proper permissions
+RUN mkdir -p /uploads && chmod -R 777 /uploads
+
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Builder image
@@ -73,6 +76,9 @@ COPY package.json nx.json /app/
 
 VOLUME /config
 VOLUME /uploads
+
+# Ensure uploads directory has proper permissions in the dist image too
+RUN mkdir -p /uploads && chmod -R 777 /uploads
 
 ## Labels at the bottom, because CI will eventually add dates, commit hashes, etc.
 LABEL org.opencontainers.image.title="Postiz App (Production)"
