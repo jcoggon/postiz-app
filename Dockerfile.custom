@@ -1,0 +1,10 @@
+# Use the official image as a base
+FROM ghcr.io/gitroomhq/postiz-app:latest
+
+# Copy your modified files
+# Note: We need to copy the compiled JS files, not the TypeScript source
+COPY ./dist/apps/backend/main.js /app/dist/apps/backend/main.js
+COPY ./apps/frontend/src/app/colors.scss /app/apps/frontend/src/app/colors.scss
+
+# Ensure uploads directory has proper permissions
+RUN mkdir -p /uploads && chmod -R 777 /uploads
