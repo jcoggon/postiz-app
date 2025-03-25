@@ -14,6 +14,11 @@ if [ -f /app/custom-files/colors.scss ]; then
   echo "Custom colors.scss file copied successfully."
 fi
 
+# Install missing dependencies
+echo "Installing missing dependencies..."
+cd /app && npm install bs58 --no-save
+echo "Dependencies installed successfully."
+
 # Ensure uploads directory has proper permissions
 mkdir -p /uploads
 chmod -R 777 /uploads
