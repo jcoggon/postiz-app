@@ -21,7 +21,7 @@ services:
       - ./custom-entrypoint.sh:/app/custom-entrypoint.sh
       - ./custom-files:/app/custom-files
     ports:
-      - 3000:3000  # Backend API
+      - 3001:3000  # Backend API
       - 3002:3001  # Main URL
       - 4200:4200  # Frontend
       - 5000:5000  # Default port
@@ -44,8 +44,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-postiz-db-local}
     volumes:
       - postgres-volume:/var/lib/postgresql/data
-    # ports:
-    #   - 5433:5432
+    ports:
+      - 5533:5432
     networks:
       - postiz-network
     healthcheck:
