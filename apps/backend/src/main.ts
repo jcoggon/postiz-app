@@ -16,6 +16,10 @@ async function bootstrap() {
     cors: {
       origin: [
         process.env.FRONTEND_URL,
+        'http://localhost:3001',
+        'http://localhost:3000',
+        'http://localhost:4200',
+        'https://linkedio.io',
         ...(process.env.MAIN_URL ? [process.env.MAIN_URL] : []),
       ],
       credentials: true,

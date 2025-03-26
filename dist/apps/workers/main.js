@@ -19,9 +19,9 @@ const common_1 = __webpack_require__(4);
 const stars_controller_1 = __webpack_require__(5);
 const database_module_1 = __webpack_require__(37);
 const trending_service_1 = __webpack_require__(34);
-const posts_controller_1 = __webpack_require__(132);
-const bull_mq_module_1 = __webpack_require__(133);
-const plugs_controller_1 = __webpack_require__(134);
+const posts_controller_1 = __webpack_require__(140);
+const bull_mq_module_1 = __webpack_require__(141);
+const plugs_controller_1 = __webpack_require__(142);
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -1515,6 +1515,10 @@ let BullMqClient = class BullMqClient extends microservices_1.ClientProxy {
         const queue = this.getQueue(pattern);
         return queue.remove(jobId);
     }
+    deleteScheduler(pattern, jobId) {
+        const queue = this.getQueue(pattern);
+        return queue.removeJobScheduler(jobId);
+    }
     async publishAsync(packet, callback) {
         const queue = this.getQueue(packet.pattern);
         const queueEvents = this.getQueueEvents(packet.pattern);
@@ -1549,6 +1553,19 @@ let BullMqClient = class BullMqClient extends microservices_1.ClientProxy {
     async dispatchEvent(packet) {
         console.log('event to dispatch: ', packet);
         const queue = this.getQueue(packet.pattern);
+        if (packet?.data?.options?.every) {
+            const { every, immediately } = packet.data.options;
+            const id = packet.data.id ?? (0, uuid_1.v4)();
+            await queue.upsertJobScheduler(id, { every, ...(immediately ? { immediately } : {}) }, {
+                name: id,
+                data: packet.data,
+                opts: {
+                    removeOnComplete: true,
+                    removeOnFail: true,
+                },
+            });
+            return;
+        }
         await queue.add(packet.pattern, packet.data, {
             jobId: packet.data.id ?? (0, uuid_1.v4)(),
             ...packet.data.options,
@@ -1679,28 +1696,30 @@ const subscription_repository_1 = __webpack_require__(44);
 const notification_service_1 = __webpack_require__(14);
 const integration_service_1 = __webpack_require__(45);
 const integration_repository_1 = __webpack_require__(46);
-const posts_service_1 = __webpack_require__(101);
-const posts_repository_1 = __webpack_require__(102);
+const posts_service_1 = __webpack_require__(102);
+const posts_repository_1 = __webpack_require__(103);
 const integration_manager_1 = __webpack_require__(57);
-const media_service_1 = __webpack_require__(113);
-const media_repository_1 = __webpack_require__(114);
+const media_service_1 = __webpack_require__(114);
+const media_repository_1 = __webpack_require__(115);
 const notifications_repository_1 = __webpack_require__(15);
 const email_service_1 = __webpack_require__(16);
-const item_user_repository_1 = __webpack_require__(125);
-const item_user_service_1 = __webpack_require__(126);
-const messages_service_1 = __webpack_require__(106);
-const messages_repository_1 = __webpack_require__(107);
-const stripe_service_1 = __webpack_require__(108);
-const extract_content_service_1 = __webpack_require__(127);
-const openai_service_1 = __webpack_require__(115);
-const agencies_service_1 = __webpack_require__(128);
-const agencies_repository_1 = __webpack_require__(129);
-const track_service_1 = __webpack_require__(110);
-const short_link_service_1 = __webpack_require__(119);
-const webhooks_repository_1 = __webpack_require__(124);
-const webhooks_service_1 = __webpack_require__(123);
-const signature_repository_1 = __webpack_require__(130);
-const signature_service_1 = __webpack_require__(131);
+const item_user_repository_1 = __webpack_require__(127);
+const item_user_service_1 = __webpack_require__(128);
+const messages_service_1 = __webpack_require__(107);
+const messages_repository_1 = __webpack_require__(108);
+const stripe_service_1 = __webpack_require__(109);
+const extract_content_service_1 = __webpack_require__(129);
+const openai_service_1 = __webpack_require__(116);
+const agencies_service_1 = __webpack_require__(130);
+const agencies_repository_1 = __webpack_require__(131);
+const track_service_1 = __webpack_require__(111);
+const short_link_service_1 = __webpack_require__(120);
+const webhooks_repository_1 = __webpack_require__(125);
+const webhooks_service_1 = __webpack_require__(124);
+const signature_repository_1 = __webpack_require__(132);
+const signature_service_1 = __webpack_require__(133);
+const autopost_repository_1 = __webpack_require__(101);
+const autopost_service_1 = __webpack_require__(134);
 let DatabaseModule = class DatabaseModule {
 };
 exports.DatabaseModule = DatabaseModule;
@@ -1731,6 +1750,8 @@ exports.DatabaseModule = DatabaseModule = tslib_1.__decorate([
             stripe_service_1.StripeService,
             messages_repository_1.MessagesRepository,
             signature_repository_1.SignatureRepository,
+            autopost_repository_1.AutopostRepository,
+            autopost_service_1.AutopostService,
             signature_service_1.SignatureService,
             media_service_1.MediaService,
             media_repository_1.MediaRepository,
@@ -2355,6 +2376,9 @@ let SubscriptionService = class SubscriptionService {
         if (!from.team_members && to.team_members) {
             await this._organizationService.disableOrEnableNonSuperAdminUsers(getOrgByCustomerId?.id, false);
         }
+        if (billing === 'FREE') {
+            await this._integrationService.changeActiveCron(getOrgByCustomerId?.id);
+        }
         return true;
         // if (to.faq < from.faq) {
         //   await this._faqRepository.deleteFAQs(getCurrentSubscription?.organizationId, from.faq - to.faq);
@@ -2446,6 +2470,7 @@ exports.pricing = {
         image_generator: false,
         public_api: false,
         webhooks: 0,
+        autoPost: false,
     },
     STANDARD: {
         current: 'STANDARD',
@@ -2462,6 +2487,7 @@ exports.pricing = {
         image_generator: false,
         public_api: true,
         webhooks: 2,
+        autoPost: false,
     },
     TEAM: {
         current: 'TEAM',
@@ -2478,6 +2504,7 @@ exports.pricing = {
         image_generator: true,
         public_api: true,
         webhooks: 10,
+        autoPost: true,
     },
     PRO: {
         current: 'PRO',
@@ -2494,6 +2521,7 @@ exports.pricing = {
         image_generator: true,
         public_api: true,
         webhooks: 30,
+        autoPost: true,
     },
     ULTIMATE: {
         current: 'ULTIMATE',
@@ -2510,6 +2538,7 @@ exports.pricing = {
         image_generator: true,
         public_api: true,
         webhooks: 10000,
+        autoPost: true,
     },
 };
 
@@ -2737,7 +2766,7 @@ exports.SubscriptionRepository = SubscriptionRepository = tslib_1.__decorate([
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
-var _a, _b, _c, _d;
+var _a, _b, _c, _d, _e;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.IntegrationService = void 0;
 const tslib_1 = __webpack_require__(3);
@@ -2753,14 +2782,23 @@ const upload_factory_1 = __webpack_require__(47);
 const client_1 = __webpack_require__(28);
 const lodash_1 = __webpack_require__(12);
 const utc_1 = tslib_1.__importDefault(__webpack_require__(100));
+const autopost_repository_1 = __webpack_require__(101);
 dayjs_1.default.extend(utc_1.default);
 let IntegrationService = class IntegrationService {
-    constructor(_integrationRepository, _integrationManager, _notificationService, _workerServiceProducer) {
+    constructor(_integrationRepository, _autopostsRepository, _integrationManager, _notificationService, _workerServiceProducer) {
         this._integrationRepository = _integrationRepository;
+        this._autopostsRepository = _autopostsRepository;
         this._integrationManager = _integrationManager;
         this._notificationService = _notificationService;
         this._workerServiceProducer = _workerServiceProducer;
         this.storage = upload_factory_1.UploadFactory.createStorage();
+    }
+    async changeActiveCron(orgId) {
+        const data = await this._autopostsRepository.getAutoposts(orgId);
+        for (const item of data.filter(f => f.active)) {
+            await this._workerServiceProducer.deleteScheduler('cron', item.id);
+        }
+        return true;
     }
     async setTimes(orgId, integrationId, times) {
         return this._integrationRepository.setTimes(orgId, integrationId, times);
@@ -2835,7 +2873,8 @@ let IntegrationService = class IntegrationService {
     }
     async enableChannel(org, totalChannels, id) {
         const integrations = (await this._integrationRepository.getIntegrationsList(org)).filter((f) => !f.disabled);
-        if (!!process.env.STRIPE_PUBLISHABLE_KEY && integrations.length >= totalChannels) {
+        if (!!process.env.STRIPE_PUBLISHABLE_KEY &&
+            integrations.length >= totalChannels) {
             throw new Error('You have reached the maximum number of channels');
         }
         return this._integrationRepository.enableChannel(org, id);
@@ -3057,7 +3096,7 @@ let IntegrationService = class IntegrationService {
 exports.IntegrationService = IntegrationService;
 exports.IntegrationService = IntegrationService = tslib_1.__decorate([
     (0, common_1.Injectable)(),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof integration_repository_1.IntegrationRepository !== "undefined" && integration_repository_1.IntegrationRepository) === "function" ? _a : Object, typeof (_b = typeof integration_manager_1.IntegrationManager !== "undefined" && integration_manager_1.IntegrationManager) === "function" ? _b : Object, typeof (_c = typeof notification_service_1.NotificationService !== "undefined" && notification_service_1.NotificationService) === "function" ? _c : Object, typeof (_d = typeof client_1.BullMqClient !== "undefined" && client_1.BullMqClient) === "function" ? _d : Object])
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof integration_repository_1.IntegrationRepository !== "undefined" && integration_repository_1.IntegrationRepository) === "function" ? _a : Object, typeof (_b = typeof autopost_repository_1.AutopostRepository !== "undefined" && autopost_repository_1.AutopostRepository) === "function" ? _b : Object, typeof (_c = typeof integration_manager_1.IntegrationManager !== "undefined" && integration_manager_1.IntegrationManager) === "function" ? _c : Object, typeof (_d = typeof notification_service_1.NotificationService !== "undefined" && notification_service_1.NotificationService) === "function" ? _d : Object, typeof (_e = typeof client_1.BullMqClient !== "undefined" && client_1.BullMqClient) === "function" ? _e : Object])
 ], IntegrationService);
 
 
@@ -4495,12 +4534,12 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
         if (!getCompanyVanity || !getCompanyVanity?.length) {
             throw new Error('Invalid LinkedIn company URL');
         }
-        const { elements } = await (await this.fetch(`https://api.linkedin.com/rest/organizations?q=vanityName&vanityName=${getCompanyVanity[1]}`, {
+        const { elements } = await (await this.fetch(`https://api.linkedin.com/v2/organizations?q=vanityName&vanityName=${getCompanyVanity[1]}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
                 'X-Restli-Protocol-Version': '2.0.0',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${token}`,
             },
         })).json();
@@ -4512,12 +4551,12 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
         };
     }
     async uploadPicture(fileName, accessToken, personId, picture, type = 'personal') {
-        const { value: { uploadUrl, image, video, uploadInstructions, ...all }, } = await (await this.fetch(`https://api.linkedin.com/rest/${fileName.indexOf('mp4') > -1 ? 'videos' : 'images'}?action=initializeUpload`, {
+        const { value: { uploadUrl, image, video, uploadInstructions, ...all }, } = await (await this.fetch(`https://api.linkedin.com/v2/${fileName.indexOf('mp4') > -1 ? 'videos' : 'images'}?action=initializeUpload`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-Restli-Protocol-Version': '2.0.0',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
@@ -4543,7 +4582,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
                 method: 'PUT',
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     Authorization: `Bearer ${accessToken}`,
                     ...(fileName.indexOf('mp4') > -1
                         ? { 'Content-Type': 'application/octet-stream' }
@@ -4554,7 +4593,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
             etags.push(upload.headers.get('etag'));
         }
         if (fileName.indexOf('mp4') > -1) {
-            const a = await this.fetch('https://api.linkedin.com/rest/videos?action=finalizeUpload', {
+            const a = await this.fetch('https://api.linkedin.com/v2/videos?action=finalizeUpload', {
                 method: 'POST',
                 body: JSON.stringify({
                     finalizeUploadRequest: {
@@ -4565,7 +4604,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
                 }),
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${accessToken}`,
                 },
@@ -4713,7 +4752,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
     }
     async repostPostUsers(integration, originalIntegration, postId, information, isPersonal = true) {
         try {
-            await this.fetch(`https://api.linkedin.com/rest/posts`, {
+            await this.fetch(`https://api.linkedin.com/v2/posts`, {
                 body: JSON.stringify({
                     author: (isPersonal ? 'urn:li:person:' : `urn:li:organization:`) +
                         `${integration.internalId}`,
@@ -4734,7 +4773,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
                     'Content-Type': 'application/json',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     Authorization: `Bearer ${integration.token}`,
                 },
             });
@@ -11250,6 +11289,7 @@ class TiktokProvider extends social_abstract_1.SocialAbstract {
         this.identifier = 'tiktok';
         this.name = 'Tiktok';
         this.isBetweenSteps = false;
+        this.convertToJPEG = true;
         this.scopes = [
             'user.info.basic',
             'video.publish',
@@ -11311,7 +11351,7 @@ class TiktokProvider extends social_abstract_1.SocialAbstract {
             code_verifier: params.codeVerifier,
             redirect_uri: `${process?.env?.FRONTEND_URL?.indexOf('https') === -1
                 ? 'https://redirectmeto.com/'
-                : ''}${process?.env?.FRONTEND_URL}/integrations/social/tiktok`
+                : ''}${process?.env?.FRONTEND_URL}/integrations/social/tiktok`,
         };
         const { access_token, refresh_token, scope } = await (await this.fetch('https://open.tiktokapis.com/v2/oauth/token/', {
             headers: {
@@ -11376,47 +11416,64 @@ class TiktokProvider extends social_abstract_1.SocialAbstract {
                 };
             }
             if (status === 'FAILED') {
-                throw new social_abstract_1.BadBody('titok-error-upload', JSON.stringify(post), {
-                    // @ts-ignore
-                    postDetails,
-                });
+                throw new social_abstract_1.BadBody('titok-error-upload', JSON.stringify(post), Buffer.from(JSON.stringify(post)));
             }
             await (0, timer_1.timer)(3000);
         }
     }
-    postingMethod(method) {
+    postingMethod(method, isPhoto) {
         switch (method) {
             case 'UPLOAD':
-                return '/inbox/video/init/';
+                return isPhoto ? '/content/init/' : '/inbox/video/init/';
             case 'DIRECT_POST':
             default:
-                return '/video/init/';
+                return isPhoto ? '/content/init/' : '/video/init/';
         }
     }
     async post(id, accessToken, postDetails, integration) {
         const [firstPost, ...comments] = postDetails;
-        const { data: { publish_id }, } = await (await this.fetch(`https://open.tiktokapis.com/v2/post/publish${this.postingMethod(firstPost.settings.content_posting_method)}`, {
+        const { data: { publish_id }, } = await (await this.fetch(`https://open.tiktokapis.com/v2/post/publish${this.postingMethod(firstPost.settings.content_posting_method, (firstPost?.media?.[0]?.url?.indexOf('mp4') || -1) === -1)}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json; charset=UTF-8',
                 Authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
-                ...(firstPost.settings.content_posting_method === 'DIRECT_POST' ? {
-                    post_info: {
-                        title: firstPost.message,
-                        privacy_level: firstPost.settings.privacy_level,
-                        disable_duet: !firstPost.settings.duet,
-                        disable_comment: !firstPost.settings.comment,
-                        disable_stitch: !firstPost.settings.stitch,
-                        brand_content_toggle: firstPost.settings.brand_content_toggle,
-                        brand_organic_toggle: firstPost.settings.brand_organic_toggle,
+                ...(firstPost.settings.content_posting_method === 'DIRECT_POST'
+                    ? {
+                        post_info: {
+                            title: firstPost.message,
+                            privacy_level: firstPost.settings.privacy_level,
+                            disable_duet: !firstPost.settings.duet,
+                            disable_comment: !firstPost.settings.comment,
+                            disable_stitch: !firstPost.settings.stitch,
+                            brand_content_toggle: firstPost.settings.brand_content_toggle,
+                            brand_organic_toggle: firstPost.settings.brand_organic_toggle,
+                            ...((firstPost?.media?.[0]?.url?.indexOf('mp4') || -1) ===
+                                -1
+                                ? {
+                                    auto_add_music: firstPost.settings.autoAddMusic === 'yes',
+                                }
+                                : {}),
+                        },
                     }
-                } : {}),
-                source_info: {
-                    source: 'PULL_FROM_URL',
-                    video_url: firstPost?.media?.[0]?.url,
-                },
+                    : {}),
+                ...((firstPost?.media?.[0]?.url?.indexOf('mp4') || -1) > -1
+                    ? {
+                        source_info: {
+                            source: 'PULL_FROM_URL',
+                            video_url: firstPost?.media?.[0]?.url,
+                        },
+                    }
+                    : {
+                        source_info: {
+                            source: 'PULL_FROM_URL',
+                            photo_cover_index: 1,
+                            photo_images: firstPost.media?.map((p) => p.url),
+                        },
+                        post_mode: 'DIRECT_POST',
+                        media_type: 'PHOTO',
+                    }),
             }),
         })).json();
         const { url, id: videoId } = await this.uploadedVideoSuccess(integration.profile, publish_id, accessToken);
@@ -11896,7 +11953,7 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'X-Restli-Protocol-Version': '2.0.0',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
             },
         })).json();
         return (elements || []).map((e) => ({
@@ -11975,21 +12032,21 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
     async analytics(id, accessToken, date) {
         const endDate = (0, dayjs_1.default)().unix() * 1000;
         const startDate = (0, dayjs_1.default)().subtract(date, 'days').unix() * 1000;
-        const { elements } = await (await this.fetch(`https://api.linkedin.com/rest/organizationPageStatistics?q=organization&organization=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
+        const { elements } = await (await this.fetch(`https://api.linkedin.com/v2/organizationPageStatistics?q=organization&organization=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'Linkedin-Version': '202405',
                 'X-Restli-Protocol-Version': '2.0.0',
             },
         })).json();
-        const { elements: elements2 } = await (await this.fetch(`https://api.linkedin.com/rest/organizationalEntityFollowerStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
+        const { elements: elements2 } = await (await this.fetch(`https://api.linkedin.com/v2/organizationalEntityFollowerStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'Linkedin-Version': '202405',
                 'X-Restli-Protocol-Version': '2.0.0',
             },
         })).json();
-        const { elements: elements3 } = await (await this.fetch(`https://api.linkedin.com/rest/organizationalEntityShareStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
+        const { elements: elements3 } = await (await this.fetch(`https://api.linkedin.com/v2/organizationalEntityShareStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'Linkedin-Version': '202405',
@@ -12056,13 +12113,13 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
             headers: {
                 'X-Restli-Protocol-Version': '2.0.0',
                 'Content-Type': 'application/json',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${integration.token}`,
             },
         })).json();
         if (totalLikes >= +fields.likesAmount) {
             await (0, timer_1.timer)(2000);
-            await this.fetch(`https://api.linkedin.com/rest/posts`, {
+            await this.fetch(`https://api.linkedin.com/v2/posts`, {
                 body: JSON.stringify({
                     author: `urn:li:organization:${integration.internalId}`,
                     commentary: '',
@@ -12082,7 +12139,7 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
                     'Content-Type': 'application/json',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     Authorization: `Bearer ${integration.token}`,
                 },
             });
@@ -12096,7 +12153,7 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
             headers: {
                 'X-Restli-Protocol-Version': '2.0.0',
                 'Content-Type': 'application/json',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${integration.token}`,
             },
         })).json();
@@ -14017,28 +14074,146 @@ module.exports = require("dayjs/plugin/utc");
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
+var _a;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AutopostRepository = void 0;
+const tslib_1 = __webpack_require__(3);
+const prisma_service_1 = __webpack_require__(10);
+const common_1 = __webpack_require__(4);
+const uuid_1 = __webpack_require__(32);
+let AutopostRepository = class AutopostRepository {
+    constructor(_autoPost) {
+        this._autoPost = _autoPost;
+    }
+    getTotal(orgId) {
+        return this._autoPost.model.autoPost.count({
+            where: {
+                organizationId: orgId,
+                deletedAt: null,
+            },
+        });
+    }
+    getAutoposts(orgId) {
+        return this._autoPost.model.autoPost.findMany({
+            where: {
+                organizationId: orgId,
+                deletedAt: null,
+            },
+        });
+    }
+    deleteAutopost(orgId, id) {
+        return this._autoPost.model.autoPost.update({
+            where: {
+                id,
+                organizationId: orgId,
+            },
+            data: {
+                deletedAt: new Date(),
+            },
+        });
+    }
+    getAutopost(id) {
+        return this._autoPost.model.autoPost.findUnique({
+            where: {
+                id,
+                deletedAt: null,
+            },
+        });
+    }
+    updateUrl(id, url) {
+        return this._autoPost.model.autoPost.update({
+            where: {
+                id,
+            },
+            data: {
+                lastUrl: url,
+            },
+        });
+    }
+    changeActive(orgId, id, active) {
+        return this._autoPost.model.autoPost.update({
+            where: {
+                id,
+                organizationId: orgId,
+            },
+            data: {
+                active,
+            },
+        });
+    }
+    async createAutopost(orgId, body, id) {
+        const { id: newId, active } = await this._autoPost.model.autoPost.upsert({
+            where: {
+                id: id || (0, uuid_1.v4)(),
+                organizationId: orgId,
+            },
+            create: {
+                organizationId: orgId,
+                url: body.url,
+                title: body.title,
+                integrations: JSON.stringify(body.integrations),
+                active: body.active,
+                content: body.content,
+                generateContent: body.generateContent,
+                addPicture: body.addPicture,
+                syncLast: body.syncLast,
+                onSlot: body.onSlot,
+                lastUrl: body.lastUrl,
+            },
+            update: {
+                url: body.url,
+                title: body.title,
+                integrations: JSON.stringify(body.integrations),
+                active: body.active,
+                content: body.content,
+                generateContent: body.generateContent,
+                addPicture: body.addPicture,
+                syncLast: body.syncLast,
+                onSlot: body.onSlot,
+                lastUrl: body.lastUrl,
+            },
+        });
+        return { id: newId, active };
+    }
+};
+exports.AutopostRepository = AutopostRepository;
+exports.AutopostRepository = AutopostRepository = tslib_1.__decorate([
+    (0, common_1.Injectable)(),
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof prisma_service_1.PrismaRepository !== "undefined" && prisma_service_1.PrismaRepository) === "function" ? _a : Object])
+], AutopostRepository);
+
+
+/***/ }),
+/* 102 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
 var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PostsService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const posts_repository_1 = __webpack_require__(102);
+const posts_repository_1 = __webpack_require__(103);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(13));
 const integration_manager_1 = __webpack_require__(57);
 const client_1 = __webpack_require__(11);
 const notification_service_1 = __webpack_require__(14);
 const lodash_1 = __webpack_require__(12);
-const messages_service_1 = __webpack_require__(106);
-const stripe_service_1 = __webpack_require__(108);
+const messages_service_1 = __webpack_require__(107);
+const stripe_service_1 = __webpack_require__(109);
 const integration_service_1 = __webpack_require__(45);
 const make_is_1 = __webpack_require__(27);
 const social_abstract_1 = __webpack_require__(64);
 const client_2 = __webpack_require__(28);
 const timer_1 = __webpack_require__(65);
 const utc_1 = tslib_1.__importDefault(__webpack_require__(100));
-const media_service_1 = __webpack_require__(113);
-const short_link_service_1 = __webpack_require__(119);
-const webhooks_service_1 = __webpack_require__(123);
+const media_service_1 = __webpack_require__(114);
+const short_link_service_1 = __webpack_require__(120);
+const webhooks_service_1 = __webpack_require__(124);
+const axios_1 = tslib_1.__importDefault(__webpack_require__(53));
+const sharp_1 = tslib_1.__importDefault(__webpack_require__(61));
+const upload_factory_1 = __webpack_require__(47);
+const stream_1 = __webpack_require__(126);
 dayjs_1.default.extend(utc_1.default);
 let PostsService = class PostsService {
     constructor(_postRepository, _workerServiceProducer, _integrationManager, _notificationService, _messagesService, _stripeService, _integrationService, _mediaService, _shortLinkService, _webhookService) {
@@ -14052,6 +14227,7 @@ let PostsService = class PostsService {
         this._mediaService = _mediaService;
         this._shortLinkService = _shortLinkService;
         this._webhookService = _webhookService;
+        this.storage = upload_factory_1.UploadFactory.createStorage();
     }
     async getStatistics(orgId, id) {
         const getPost = await this.getPostsRecursively(id, true, orgId, true);
@@ -14076,15 +14252,16 @@ let PostsService = class PostsService {
     async getPosts(orgId, query) {
         return this._postRepository.getPosts(orgId, query);
     }
-    async updateMedia(id, imagesList) {
+    async updateMedia(id, imagesList, convertToJPEG = false) {
         let imageUpdateNeeded = false;
-        const getImageList = (await Promise.all(imagesList.map(async (p) => {
+        const getImageList = await Promise.all((await Promise.all(imagesList.map(async (p) => {
             if (!p.path && p.id) {
                 imageUpdateNeeded = true;
                 return this._mediaService.getMediaById(p.id);
             }
             return p;
-        }))).map((m) => {
+        })))
+            .map((m) => {
             return {
                 ...m,
                 url: m.path.indexOf('http') === -1
@@ -14098,19 +14275,62 @@ let PostsService = class PostsService {
                     ? process.env.UPLOAD_DIRECTORY + m.path
                     : m.path,
             };
-        });
+        })
+            .map(async (m) => {
+            if (!convertToJPEG) {
+                return m;
+            }
+            if (m.path.indexOf('.png') > -1) {
+                imageUpdateNeeded = true;
+                const response = await axios_1.default.get(m.url, {
+                    responseType: 'arraybuffer',
+                });
+                const imageBuffer = Buffer.from(response.data);
+                // Use sharp to get the metadata of the image
+                const buffer = await (0, sharp_1.default)(imageBuffer)
+                    .jpeg({ quality: 100 })
+                    .toBuffer();
+                const { path, originalname } = await this.storage.uploadFile({
+                    buffer,
+                    mimetype: 'image/jpeg',
+                    size: buffer.length,
+                    path: '',
+                    fieldname: '',
+                    destination: '',
+                    stream: new stream_1.Readable(),
+                    filename: '',
+                    originalname: '',
+                    encoding: '',
+                });
+                return {
+                    ...m,
+                    name: originalname,
+                    url: path.indexOf('http') === -1
+                        ? process.env.FRONTEND_URL +
+                            '/' +
+                            process.env.NEXT_PUBLIC_UPLOAD_STATIC_DIRECTORY +
+                            path
+                        : path,
+                    type: 'image',
+                    path: path.indexOf('http') === -1
+                        ? process.env.UPLOAD_DIRECTORY + path
+                        : path,
+                };
+            }
+            return m;
+        }));
         if (imageUpdateNeeded) {
             await this._postRepository.updateImages(id, JSON.stringify(getImageList));
         }
         return getImageList;
     }
-    async getPost(orgId, id) {
+    async getPost(orgId, id, convertToJPEG = false) {
         const posts = await this.getPostsRecursively(id, true, orgId, true);
         const list = {
             group: posts?.[0]?.group,
             posts: await Promise.all(posts.map(async (post) => ({
                 ...post,
-                image: await this.updateMedia(post.id, JSON.parse(post.image || '[]')),
+                image: await this.updateMedia(post.id, JSON.parse(post.image || '[]'), convertToJPEG),
             }))),
             integrationPicture: posts[0]?.integration?.picture,
             integration: posts[0].integrationId,
@@ -14233,7 +14453,7 @@ let PostsService = class PostsService {
                 id: p.id,
                 message: p.content,
                 settings: JSON.parse(p.settings || '{}'),
-                media: await this.updateMedia(p.id, JSON.parse(p.image || '[]')),
+                media: await this.updateMedia(p.id, JSON.parse(p.image || '[]'), getIntegration.convertToJPEG),
             }))), integration);
             for (const post of publishedPosts) {
                 await this._postRepository.updatePost(post.id, post.postId, post.releaseURL);
@@ -14592,7 +14812,7 @@ exports.PostsService = PostsService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 102 */
+/* 103 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -14604,9 +14824,9 @@ const prisma_service_1 = __webpack_require__(10);
 const common_1 = __webpack_require__(4);
 const client_1 = __webpack_require__(11);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(13));
-const isoWeek_1 = tslib_1.__importDefault(__webpack_require__(103));
-const weekOfYear_1 = tslib_1.__importDefault(__webpack_require__(104));
-const isSameOrAfter_1 = tslib_1.__importDefault(__webpack_require__(105));
+const isoWeek_1 = tslib_1.__importDefault(__webpack_require__(104));
+const weekOfYear_1 = tslib_1.__importDefault(__webpack_require__(105));
+const isSameOrAfter_1 = tslib_1.__importDefault(__webpack_require__(106));
 const utc_1 = tslib_1.__importDefault(__webpack_require__(100));
 const uuid_1 = __webpack_require__(32);
 dayjs_1.default.extend(isoWeek_1.default);
@@ -15196,25 +15416,25 @@ exports.PostsRepository = PostsRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 103 */
+/* 104 */
 /***/ ((module) => {
 
 module.exports = require("dayjs/plugin/isoWeek");
 
 /***/ }),
-/* 104 */
+/* 105 */
 /***/ ((module) => {
 
 module.exports = require("dayjs/plugin/weekOfYear");
 
 /***/ }),
-/* 105 */
+/* 106 */
 /***/ ((module) => {
 
 module.exports = require("dayjs/plugin/isSameOrAfter");
 
 /***/ }),
-/* 106 */
+/* 107 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -15223,7 +15443,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.MessagesService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const messages_repository_1 = __webpack_require__(107);
+const messages_repository_1 = __webpack_require__(108);
 const organization_repository_1 = __webpack_require__(22);
 const notification_service_1 = __webpack_require__(14);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(13));
@@ -15349,7 +15569,7 @@ exports.MessagesService = MessagesService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 107 */
+/* 108 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16122,7 +16342,7 @@ exports.MessagesRepository = MessagesRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 108 */
+/* 109 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16130,18 +16350,18 @@ var _a, _b, _c, _d, _e;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.StripeService = void 0;
 const tslib_1 = __webpack_require__(3);
-const stripe_1 = tslib_1.__importDefault(__webpack_require__(109));
+const stripe_1 = tslib_1.__importDefault(__webpack_require__(110));
 const common_1 = __webpack_require__(4);
 const subscription_service_1 = __webpack_require__(42);
 const organization_service_1 = __webpack_require__(38);
 const make_is_1 = __webpack_require__(27);
 const lodash_1 = __webpack_require__(12);
-const messages_service_1 = __webpack_require__(106);
+const messages_service_1 = __webpack_require__(107);
 const pricing_1 = __webpack_require__(43);
 const auth_service_1 = __webpack_require__(23);
-const track_service_1 = __webpack_require__(110);
+const track_service_1 = __webpack_require__(111);
 const users_service_1 = __webpack_require__(39);
-const track_enum_1 = __webpack_require__(111);
+const track_enum_1 = __webpack_require__(112);
 const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY, {
     apiVersion: '2024-04-10',
 });
@@ -16672,22 +16892,22 @@ exports.StripeService = StripeService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 109 */
+/* 110 */
 /***/ ((module) => {
 
 module.exports = require("stripe");
 
 /***/ }),
-/* 110 */
+/* 111 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TrackService = void 0;
 const tslib_1 = __webpack_require__(3);
-const track_enum_1 = __webpack_require__(111);
+const track_enum_1 = __webpack_require__(112);
 const common_1 = __webpack_require__(4);
-const facebook_nodejs_business_sdk_1 = __webpack_require__(112);
+const facebook_nodejs_business_sdk_1 = __webpack_require__(113);
 const crypto_1 = __webpack_require__(26);
 const access_token = process.env.FACEBOOK_PIXEL_ACCESS_TOKEN;
 const pixel_id = process.env.NEXT_PUBLIC_FACEBOOK_PIXEL;
@@ -16747,7 +16967,7 @@ exports.TrackService = TrackService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 111 */
+/* 112 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -16764,13 +16984,13 @@ var TrackEnum;
 
 
 /***/ }),
-/* 112 */
+/* 113 */
 /***/ ((module) => {
 
 module.exports = require("facebook-nodejs-business-sdk");
 
 /***/ }),
-/* 113 */
+/* 114 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16779,8 +16999,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.MediaService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const media_repository_1 = __webpack_require__(114);
-const openai_service_1 = __webpack_require__(115);
+const media_repository_1 = __webpack_require__(115);
+const openai_service_1 = __webpack_require__(116);
 const subscription_service_1 = __webpack_require__(42);
 let MediaService = class MediaService {
     constructor(_mediaRepository, _openAi, _subscriptionService) {
@@ -16818,7 +17038,7 @@ exports.MediaService = MediaService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 114 */
+/* 115 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16900,7 +17120,7 @@ exports.MediaRepository = MediaRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 115 */
+/* 116 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16908,10 +17128,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.OpenaiService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const openai_1 = tslib_1.__importDefault(__webpack_require__(116));
+const openai_1 = tslib_1.__importDefault(__webpack_require__(117));
 const lodash_1 = __webpack_require__(12);
-const zod_1 = __webpack_require__(117);
-const zod_2 = __webpack_require__(118);
+const zod_1 = __webpack_require__(118);
+const zod_2 = __webpack_require__(119);
 const openai = new openai_1.default({
     apiKey: process.env.OPENAI_API_KEY || 'sk-proj-',
 });
@@ -17018,25 +17238,25 @@ exports.OpenaiService = OpenaiService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 116 */
+/* 117 */
 /***/ ((module) => {
 
 module.exports = require("openai");
 
 /***/ }),
-/* 117 */
+/* 118 */
 /***/ ((module) => {
 
 module.exports = require("openai/helpers/zod");
 
 /***/ }),
-/* 118 */
+/* 119 */
 /***/ ((module) => {
 
 module.exports = require("zod");
 
 /***/ }),
-/* 119 */
+/* 120 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17044,10 +17264,10 @@ var ShortLinkService_1;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ShortLinkService = void 0;
 const tslib_1 = __webpack_require__(3);
-const dub_1 = __webpack_require__(120);
-const empty_1 = __webpack_require__(121);
+const dub_1 = __webpack_require__(121);
+const empty_1 = __webpack_require__(122);
 const common_1 = __webpack_require__(4);
-const short_io_1 = __webpack_require__(122);
+const short_io_1 = __webpack_require__(123);
 const getProvider = () => {
     if (process.env.DUB_TOKEN) {
         return new dub_1.Dub();
@@ -17151,7 +17371,7 @@ exports.ShortLinkService = ShortLinkService = ShortLinkService_1 = tslib_1.__dec
 
 
 /***/ }),
-/* 120 */
+/* 121 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -17209,7 +17429,7 @@ exports.Dub = Dub;
 
 
 /***/ }),
-/* 121 */
+/* 122 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -17236,7 +17456,7 @@ exports.Empty = Empty;
 
 
 /***/ }),
-/* 122 */
+/* 123 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -17304,7 +17524,7 @@ exports.ShortIo = ShortIo;
 
 
 /***/ }),
-/* 123 */
+/* 124 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17313,10 +17533,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.WebhooksService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const webhooks_repository_1 = __webpack_require__(124);
+const webhooks_repository_1 = __webpack_require__(125);
 const redis_service_1 = __webpack_require__(30);
 const client_1 = __webpack_require__(28);
-const posts_repository_1 = __webpack_require__(102);
+const posts_repository_1 = __webpack_require__(103);
 let WebhooksService = class WebhooksService {
     constructor(_webhooksRepository, _postsRepository, _workerServiceProducer) {
         this._webhooksRepository = _webhooksRepository;
@@ -17401,7 +17621,7 @@ exports.WebhooksService = WebhooksService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 124 */
+/* 125 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17497,7 +17717,13 @@ exports.WebhooksRepository = WebhooksRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 125 */
+/* 126 */
+/***/ ((module) => {
+
+module.exports = require("stream");
+
+/***/ }),
+/* 127 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17551,7 +17777,7 @@ exports.ItemUserRepository = ItemUserRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 126 */
+/* 128 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17560,7 +17786,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ItemUserService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const item_user_repository_1 = __webpack_require__(125);
+const item_user_repository_1 = __webpack_require__(127);
 let ItemUserService = class ItemUserService {
     constructor(_itemUserRepository) {
         this._itemUserRepository = _itemUserRepository;
@@ -17580,7 +17806,7 @@ exports.ItemUserService = ItemUserService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 127 */
+/* 129 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17667,7 +17893,7 @@ exports.ExtractContentService = ExtractContentService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 128 */
+/* 130 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17676,7 +17902,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AgenciesService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const agencies_repository_1 = __webpack_require__(129);
+const agencies_repository_1 = __webpack_require__(131);
 const notification_service_1 = __webpack_require__(14);
 let AgenciesService = class AgenciesService {
     constructor(_agenciesRepository, _notificationService) {
@@ -17834,7 +18060,7 @@ exports.AgenciesService = AgenciesService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 129 */
+/* 131 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18006,7 +18232,7 @@ exports.AgenciesRepository = AgenciesRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 130 */
+/* 132 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18059,7 +18285,7 @@ exports.SignatureRepository = SignatureRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 131 */
+/* 133 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18068,7 +18294,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SignatureService = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
-const signature_repository_1 = __webpack_require__(130);
+const signature_repository_1 = __webpack_require__(132);
 let SignatureService = class SignatureService {
     constructor(_signatureRepository) {
         this._signatureRepository = _signatureRepository;
@@ -18091,22 +18317,339 @@ exports.SignatureService = SignatureService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 132 */
+/* 134 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
-var _a, _b;
+var AutopostService_1;
+var _a, _b, _c, _d;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AutopostService = void 0;
+const tslib_1 = __webpack_require__(3);
+const common_1 = __webpack_require__(4);
+const autopost_repository_1 = __webpack_require__(101);
+const client_1 = __webpack_require__(28);
+const dayjs_1 = tslib_1.__importDefault(__webpack_require__(13));
+const langgraph_1 = __webpack_require__(135);
+const striptags_1 = tslib_1.__importDefault(__webpack_require__(136));
+const openai_1 = __webpack_require__(137);
+const jsdom_1 = __webpack_require__(7);
+const zod_1 = __webpack_require__(119);
+const prompts_1 = __webpack_require__(138);
+const posts_service_1 = __webpack_require__(102);
+const rss_parser_1 = tslib_1.__importDefault(__webpack_require__(139));
+const integration_service_1 = __webpack_require__(45);
+const make_is_1 = __webpack_require__(27);
+const parser = new rss_parser_1.default();
+const model = new openai_1.ChatOpenAI({
+    apiKey: process.env.OPENAI_API_KEY || 'sk-proj-',
+    model: 'gpt-4o-2024-08-06',
+    temperature: 0.7,
+});
+const dalle = new openai_1.DallEAPIWrapper({
+    apiKey: process.env.OPENAI_API_KEY || 'sk-proj-',
+    model: 'dall-e-3',
+});
+const generateContent = zod_1.z.object({
+    socialMediaPostContent: zod_1.z
+        .string()
+        .describe('Content for social media posts max 120 chars'),
+});
+const dallePrompt = zod_1.z.object({
+    generatedTextToBeSentToDallE: zod_1.z
+        .string()
+        .describe('Generated prompt from description to be sent to DallE'),
+});
+let AutopostService = AutopostService_1 = class AutopostService {
+    constructor(_autopostsRepository, _workerServiceProducer, _integrationService, _postsService) {
+        this._autopostsRepository = _autopostsRepository;
+        this._workerServiceProducer = _workerServiceProducer;
+        this._integrationService = _integrationService;
+        this._postsService = _postsService;
+    }
+    async stopAll(org) {
+        const getAll = (await this.getAutoposts(org)).filter(f => f.active);
+        for (const autopost of getAll) {
+            await this.changeActive(org, autopost.id, false);
+        }
+    }
+    getAutoposts(orgId) {
+        return this._autopostsRepository.getAutoposts(orgId);
+    }
+    async createAutopost(orgId, body, id) {
+        const data = await this._autopostsRepository.createAutopost(orgId, body, id);
+        await this.processCron(body.active, data.id);
+        return data;
+    }
+    async changeActive(orgId, id, active) {
+        const data = await this._autopostsRepository.changeActive(orgId, id, active);
+        await this.processCron(active, id);
+        return data;
+    }
+    async processCron(active, id) {
+        if (active) {
+            return this._workerServiceProducer.emit('cron', {
+                id,
+                options: {
+                    every: 3600000,
+                    immediately: true,
+                },
+                payload: {
+                    id,
+                },
+            });
+        }
+        return this._workerServiceProducer.deleteScheduler('cron', id);
+    }
+    async deleteAutopost(orgId, id) {
+        const data = await this._autopostsRepository.deleteAutopost(orgId, id);
+        await this.processCron(false, id);
+        return data;
+    }
+    async loadXML(url) {
+        try {
+            const { items } = await parser.parseURL(url);
+            const findLast = items.reduce((all, current) => {
+                if ((0, dayjs_1.default)(current.pubDate).isAfter(all.pubDate)) {
+                    return current;
+                }
+                return all;
+            }, { pubDate: (0, dayjs_1.default)().subtract(100, 'years') });
+            return {
+                success: true,
+                date: findLast.pubDate,
+                url: findLast.link,
+                description: (0, striptags_1.default)(findLast?.['content:encoded'] || findLast?.content || findLast?.description || '')
+                    .replace(/\n/g, ' ')
+                    .trim(),
+            };
+        }
+        catch (err) {
+            /** sent **/
+        }
+        return { success: false };
+    }
+    async loadUrl(url) {
+        try {
+            const loadDom = new jsdom_1.JSDOM(await (await fetch(url)).text());
+            loadDom.window.document
+                .querySelectorAll('script')
+                .forEach((s) => s.remove());
+            loadDom.window.document
+                .querySelectorAll('style')
+                .forEach((s) => s.remove());
+            // remove all html, script and styles
+            return (0, striptags_1.default)(loadDom.window.document.body.innerHTML);
+        }
+        catch (err) {
+            return '';
+        }
+    }
+    async generateDescription(state) {
+        if (!state.body.generateContent) {
+            return {
+                ...state,
+                description: state.body.content,
+            };
+        }
+        const description = state.load.description || (await this.loadUrl(state.load.url));
+        if (!description) {
+            return {
+                ...state,
+                description: '',
+            };
+        }
+        const structuredOutput = model.withStructuredOutput(generateContent);
+        const { socialMediaPostContent } = await prompts_1.ChatPromptTemplate.fromTemplate(`
+        You are an assistant that gets raw 'description' of a content and generate a social media post content.
+        Rules:
+        - Maximum 100 chars
+        - Try to make it a short as possible to fit any social media
+        - Add line breaks between sentences (\\n) 
+        - Don't add hashtags
+        - Add emojis when needed
+        
+        'description':
+        {content}
+      `)
+            .pipe(structuredOutput)
+            .invoke({
+            content: description,
+        });
+        return {
+            ...state,
+            description: socialMediaPostContent,
+        };
+    }
+    async generatePicture(state) {
+        const structuredOutput = model.withStructuredOutput(dallePrompt);
+        const { generatedTextToBeSentToDallE } = await prompts_1.ChatPromptTemplate.fromTemplate(`
+        You are an assistant that gets description and generate a prompt that will be sent to DallE to generate pictures.
+        
+        content:
+        {content}
+      `)
+            .pipe(structuredOutput)
+            .invoke({
+            content: state.load.description || state.description,
+        });
+        const image = await dalle.invoke(generatedTextToBeSentToDallE);
+        return { ...state, image };
+    }
+    async schedulePost(state) {
+        const nextTime = await this._postsService.findFreeDateTime(state.integrations[0].organizationId);
+        await this._postsService.createPost(state.integrations[0].organizationId, {
+            date: nextTime + 'Z',
+            order: (0, make_is_1.makeId)(10),
+            shortLink: false,
+            type: 'draft',
+            tags: [],
+            posts: state.integrations.map((i) => ({
+                settings: {
+                    subtitle: '',
+                    title: '',
+                    tags: [],
+                    subreddit: [],
+                },
+                group: (0, make_is_1.makeId)(10),
+                integration: { id: i.id },
+                value: [
+                    {
+                        id: (0, make_is_1.makeId)(10),
+                        content: state.description.replace(/\n/g, '\n\n') + '\n\n' + state.load.url,
+                        image: !state.image
+                            ? []
+                            : [
+                                {
+                                    id: (0, make_is_1.makeId)(10),
+                                    name: (0, make_is_1.makeId)(10),
+                                    path: state.image,
+                                    organizationId: state.integrations[0].organizationId,
+                                },
+                            ],
+                    },
+                ],
+            })),
+        });
+    }
+    async updateUrl(state) {
+        await this._autopostsRepository.updateUrl(state.id, state.load.url);
+    }
+    async startAutopost(id) {
+        const getPost = await this._autopostsRepository.getAutopost(id);
+        if (!getPost || !getPost.active) {
+            return;
+        }
+        const load = await this.loadXML(getPost.url);
+        if (!load.success || load.url === getPost.lastUrl) {
+            return;
+        }
+        const integrations = await this._integrationService.getIntegrationsList(getPost.organizationId);
+        const parseIntegrations = JSON.parse(getPost.integrations || '[]') || [];
+        const neededIntegrations = integrations.filter((i) => parseIntegrations.some((ii) => ii.id === i.id));
+        const integrationsToSend = parseIntegrations.length === 0 ? integrations : neededIntegrations;
+        if (integrationsToSend.length === 0) {
+            return;
+        }
+        const state = AutopostService_1.state();
+        const workflow = state
+            .addNode('generate-description', this.generateDescription.bind(this))
+            .addNode('generate-picture', this.generatePicture.bind(this))
+            .addNode('schedule-post', this.schedulePost.bind(this))
+            .addNode('update-url', this.updateUrl.bind(this))
+            .addEdge(langgraph_1.START, 'generate-description')
+            .addConditionalEdges('generate-description', (state) => {
+            if (!state.description) {
+                return 'schedule-post';
+            }
+            if (state.body.addPicture) {
+                return 'generate-picture';
+            }
+            return 'schedule-post';
+        })
+            .addEdge('generate-picture', 'schedule-post')
+            .addEdge('schedule-post', 'update-url')
+            .addEdge('update-url', langgraph_1.END);
+        const app = workflow.compile();
+        await app.invoke({
+            messages: [],
+            id,
+            body: getPost,
+            load,
+            integrations: integrationsToSend,
+        });
+    }
+};
+exports.AutopostService = AutopostService;
+AutopostService.state = () => new langgraph_1.StateGraph({
+    channels: {
+        messages: {
+            reducer: (currentState, updateValue) => currentState.concat(updateValue),
+            default: () => [],
+        },
+        body: null,
+        description: null,
+        load: null,
+        image: null,
+        integrations: null,
+        id: null,
+    },
+});
+exports.AutopostService = AutopostService = AutopostService_1 = tslib_1.__decorate([
+    (0, common_1.Injectable)(),
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof autopost_repository_1.AutopostRepository !== "undefined" && autopost_repository_1.AutopostRepository) === "function" ? _a : Object, typeof (_b = typeof client_1.BullMqClient !== "undefined" && client_1.BullMqClient) === "function" ? _b : Object, typeof (_c = typeof integration_service_1.IntegrationService !== "undefined" && integration_service_1.IntegrationService) === "function" ? _c : Object, typeof (_d = typeof posts_service_1.PostsService !== "undefined" && posts_service_1.PostsService) === "function" ? _d : Object])
+], AutopostService);
+
+
+/***/ }),
+/* 135 */
+/***/ ((module) => {
+
+module.exports = require("@langchain/langgraph");
+
+/***/ }),
+/* 136 */
+/***/ ((module) => {
+
+module.exports = require("striptags");
+
+/***/ }),
+/* 137 */
+/***/ ((module) => {
+
+module.exports = require("@langchain/openai");
+
+/***/ }),
+/* 138 */
+/***/ ((module) => {
+
+module.exports = require("@langchain/core/prompts");
+
+/***/ }),
+/* 139 */
+/***/ ((module) => {
+
+module.exports = require("rss-parser");
+
+/***/ }),
+/* 140 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+var _a, _b, _c;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PostsController = void 0;
 const tslib_1 = __webpack_require__(3);
 const common_1 = __webpack_require__(4);
 const microservices_1 = __webpack_require__(6);
-const posts_service_1 = __webpack_require__(101);
-const webhooks_service_1 = __webpack_require__(123);
+const posts_service_1 = __webpack_require__(102);
+const webhooks_service_1 = __webpack_require__(124);
+const autopost_service_1 = __webpack_require__(134);
 let PostsController = class PostsController {
-    constructor(_postsService, _webhooksService) {
+    constructor(_postsService, _webhooksService, _autopostsService) {
         this._postsService = _postsService;
         this._webhooksService = _webhooksService;
+        this._autopostsService = _autopostsService;
     }
     async post(data) {
         console.log('processing', data);
@@ -18120,6 +18663,9 @@ let PostsController = class PostsController {
     }
     async webhooks(data) {
         return this._webhooksService.fireWebhooks(data.org, data.since);
+    }
+    async cron(data) {
+        return this._autopostsService.startAutopost(data.id);
     }
 };
 exports.PostsController = PostsController;
@@ -18147,14 +18693,20 @@ tslib_1.__decorate([
     tslib_1.__metadata("design:paramtypes", [Object]),
     tslib_1.__metadata("design:returntype", Promise)
 ], PostsController.prototype, "webhooks", null);
+tslib_1.__decorate([
+    (0, microservices_1.EventPattern)('cron', microservices_1.Transport.REDIS),
+    tslib_1.__metadata("design:type", Function),
+    tslib_1.__metadata("design:paramtypes", [Object]),
+    tslib_1.__metadata("design:returntype", Promise)
+], PostsController.prototype, "cron", null);
 exports.PostsController = PostsController = tslib_1.__decorate([
     (0, common_1.Controller)(),
-    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof posts_service_1.PostsService !== "undefined" && posts_service_1.PostsService) === "function" ? _a : Object, typeof (_b = typeof webhooks_service_1.WebhooksService !== "undefined" && webhooks_service_1.WebhooksService) === "function" ? _b : Object])
+    tslib_1.__metadata("design:paramtypes", [typeof (_a = typeof posts_service_1.PostsService !== "undefined" && posts_service_1.PostsService) === "function" ? _a : Object, typeof (_b = typeof webhooks_service_1.WebhooksService !== "undefined" && webhooks_service_1.WebhooksService) === "function" ? _b : Object, typeof (_c = typeof autopost_service_1.AutopostService !== "undefined" && autopost_service_1.AutopostService) === "function" ? _c : Object])
 ], PostsController);
 
 
 /***/ }),
-/* 133 */
+/* 141 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18176,7 +18728,7 @@ exports.BullMqModule = BullMqModule = tslib_1.__decorate([
 
 
 /***/ }),
-/* 134 */
+/* 142 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18218,7 +18770,7 @@ exports.PlugsController = PlugsController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 135 */
+/* 143 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18309,7 +18861,7 @@ var exports = __webpack_exports__;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 const core_1 = __webpack_require__(1);
 const app_module_1 = __webpack_require__(2);
-const strategy_1 = __webpack_require__(135);
+const strategy_1 = __webpack_require__(143);
 async function bootstrap() {
     // some comment again
     const app = await core_1.NestFactory.createMicroservice(app_module_1.AppModule, {

@@ -61,15 +61,15 @@ exports.AppModule = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
 const database_module_1 = __webpack_require__(8);
-const api_module_1 = __webpack_require__(131);
+const api_module_1 = __webpack_require__(139);
 const core_1 = __webpack_require__(6);
-const permissions_guard_1 = __webpack_require__(165);
-const bull_mq_module_1 = __webpack_require__(234);
-const plugin_module_1 = __webpack_require__(235);
-const public_api_module_1 = __webpack_require__(237);
-const throttler_provider_1 = __webpack_require__(240);
-const throttler_1 = __webpack_require__(241);
-const agent_module_1 = __webpack_require__(242);
+const permissions_guard_1 = __webpack_require__(173);
+const bull_mq_module_1 = __webpack_require__(241);
+const plugin_module_1 = __webpack_require__(242);
+const public_api_module_1 = __webpack_require__(245);
+const throttler_provider_1 = __webpack_require__(248);
+const throttler_1 = __webpack_require__(249);
+const agent_module_1 = __webpack_require__(250);
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -129,28 +129,30 @@ const subscription_repository_1 = __webpack_require__(42);
 const notification_service_1 = __webpack_require__(18);
 const integration_service_1 = __webpack_require__(43);
 const integration_repository_1 = __webpack_require__(44);
-const posts_service_1 = __webpack_require__(99);
-const posts_repository_1 = __webpack_require__(100);
+const posts_service_1 = __webpack_require__(100);
+const posts_repository_1 = __webpack_require__(101);
 const integration_manager_1 = __webpack_require__(55);
-const media_service_1 = __webpack_require__(111);
-const media_repository_1 = __webpack_require__(112);
+const media_service_1 = __webpack_require__(112);
+const media_repository_1 = __webpack_require__(113);
 const notifications_repository_1 = __webpack_require__(19);
 const email_service_1 = __webpack_require__(20);
-const item_user_repository_1 = __webpack_require__(123);
-const item_user_service_1 = __webpack_require__(124);
-const messages_service_1 = __webpack_require__(104);
-const messages_repository_1 = __webpack_require__(105);
-const stripe_service_1 = __webpack_require__(106);
-const extract_content_service_1 = __webpack_require__(125);
-const openai_service_1 = __webpack_require__(113);
-const agencies_service_1 = __webpack_require__(127);
-const agencies_repository_1 = __webpack_require__(128);
-const track_service_1 = __webpack_require__(108);
-const short_link_service_1 = __webpack_require__(117);
-const webhooks_repository_1 = __webpack_require__(122);
-const webhooks_service_1 = __webpack_require__(121);
-const signature_repository_1 = __webpack_require__(129);
-const signature_service_1 = __webpack_require__(130);
+const item_user_repository_1 = __webpack_require__(125);
+const item_user_service_1 = __webpack_require__(126);
+const messages_service_1 = __webpack_require__(105);
+const messages_repository_1 = __webpack_require__(106);
+const stripe_service_1 = __webpack_require__(107);
+const extract_content_service_1 = __webpack_require__(127);
+const openai_service_1 = __webpack_require__(114);
+const agencies_service_1 = __webpack_require__(129);
+const agencies_repository_1 = __webpack_require__(130);
+const track_service_1 = __webpack_require__(109);
+const short_link_service_1 = __webpack_require__(118);
+const webhooks_repository_1 = __webpack_require__(123);
+const webhooks_service_1 = __webpack_require__(122);
+const signature_repository_1 = __webpack_require__(131);
+const signature_service_1 = __webpack_require__(132);
+const autopost_repository_1 = __webpack_require__(99);
+const autopost_service_1 = __webpack_require__(133);
 let DatabaseModule = class DatabaseModule {
 };
 exports.DatabaseModule = DatabaseModule;
@@ -181,6 +183,8 @@ exports.DatabaseModule = DatabaseModule = tslib_1.__decorate([
             stripe_service_1.StripeService,
             messages_repository_1.MessagesRepository,
             signature_repository_1.SignatureRepository,
+            autopost_repository_1.AutopostRepository,
+            autopost_service_1.AutopostService,
             signature_service_1.SignatureService,
             media_service_1.MediaService,
             media_repository_1.MediaRepository,
@@ -1146,6 +1150,10 @@ let BullMqClient = class BullMqClient extends microservices_1.ClientProxy {
         const queue = this.getQueue(pattern);
         return queue.remove(jobId);
     }
+    deleteScheduler(pattern, jobId) {
+        const queue = this.getQueue(pattern);
+        return queue.removeJobScheduler(jobId);
+    }
     async publishAsync(packet, callback) {
         const queue = this.getQueue(packet.pattern);
         const queueEvents = this.getQueueEvents(packet.pattern);
@@ -1180,6 +1188,19 @@ let BullMqClient = class BullMqClient extends microservices_1.ClientProxy {
     async dispatchEvent(packet) {
         console.log('event to dispatch: ', packet);
         const queue = this.getQueue(packet.pattern);
+        if (packet?.data?.options?.every) {
+            const { every, immediately } = packet.data.options;
+            const id = packet.data.id ?? (0, uuid_1.v4)();
+            await queue.upsertJobScheduler(id, { every, ...(immediately ? { immediately } : {}) }, {
+                name: id,
+                data: packet.data,
+                opts: {
+                    removeOnComplete: true,
+                    removeOnFail: true,
+                },
+            });
+            return;
+        }
         await queue.add(packet.pattern, packet.data, {
             jobId: packet.data.id ?? (0, uuid_1.v4)(),
             ...packet.data.options,
@@ -2270,6 +2291,9 @@ let SubscriptionService = class SubscriptionService {
         if (!from.team_members && to.team_members) {
             await this._organizationService.disableOrEnableNonSuperAdminUsers(getOrgByCustomerId?.id, false);
         }
+        if (billing === 'FREE') {
+            await this._integrationService.changeActiveCron(getOrgByCustomerId?.id);
+        }
         return true;
         // if (to.faq < from.faq) {
         //   await this._faqRepository.deleteFAQs(getCurrentSubscription?.organizationId, from.faq - to.faq);
@@ -2363,6 +2387,7 @@ exports.pricing = {
         image_generator: false,
         public_api: false,
         webhooks: 0,
+        autoPost: false,
     },
     STANDARD: {
         current: 'STANDARD',
@@ -2379,6 +2404,7 @@ exports.pricing = {
         image_generator: false,
         public_api: true,
         webhooks: 2,
+        autoPost: false,
     },
     TEAM: {
         current: 'TEAM',
@@ -2395,6 +2421,7 @@ exports.pricing = {
         image_generator: true,
         public_api: true,
         webhooks: 10,
+        autoPost: true,
     },
     PRO: {
         current: 'PRO',
@@ -2411,6 +2438,7 @@ exports.pricing = {
         image_generator: true,
         public_api: true,
         webhooks: 30,
+        autoPost: true,
     },
     ULTIMATE: {
         current: 'ULTIMATE',
@@ -2427,6 +2455,7 @@ exports.pricing = {
         image_generator: true,
         public_api: true,
         webhooks: 10000,
+        autoPost: true,
     },
 };
 
@@ -2672,14 +2701,23 @@ const upload_factory_1 = __webpack_require__(45);
 const client_1 = __webpack_require__(26);
 const lodash_1 = __webpack_require__(38);
 const utc_1 = tslib_1.__importDefault(__webpack_require__(98));
+const autopost_repository_1 = __webpack_require__(99);
 dayjs_1.default.extend(utc_1.default);
 let IntegrationService = class IntegrationService {
-    constructor(_integrationRepository, _integrationManager, _notificationService, _workerServiceProducer) {
+    constructor(_integrationRepository, _autopostsRepository, _integrationManager, _notificationService, _workerServiceProducer) {
         this._integrationRepository = _integrationRepository;
+        this._autopostsRepository = _autopostsRepository;
         this._integrationManager = _integrationManager;
         this._notificationService = _notificationService;
         this._workerServiceProducer = _workerServiceProducer;
         this.storage = upload_factory_1.UploadFactory.createStorage();
+    }
+    async changeActiveCron(orgId) {
+        const data = await this._autopostsRepository.getAutoposts(orgId);
+        for (const item of data.filter(f => f.active)) {
+            await this._workerServiceProducer.deleteScheduler('cron', item.id);
+        }
+        return true;
     }
     async setTimes(orgId, integrationId, times) {
         return this._integrationRepository.setTimes(orgId, integrationId, times);
@@ -2754,7 +2792,8 @@ let IntegrationService = class IntegrationService {
     }
     async enableChannel(org, totalChannels, id) {
         const integrations = (await this._integrationRepository.getIntegrationsList(org)).filter((f) => !f.disabled);
-        if (!!process.env.STRIPE_PUBLISHABLE_KEY && integrations.length >= totalChannels) {
+        if (!!process.env.STRIPE_PUBLISHABLE_KEY &&
+            integrations.length >= totalChannels) {
             throw new Error('You have reached the maximum number of channels');
         }
         return this._integrationRepository.enableChannel(org, id);
@@ -2977,6 +3016,7 @@ exports.IntegrationService = IntegrationService;
 exports.IntegrationService = IntegrationService = tslib_1.__decorate([
     (0, common_1.Injectable)(),
     tslib_1.__metadata("design:paramtypes", [integration_repository_1.IntegrationRepository,
+        autopost_repository_1.AutopostRepository,
         integration_manager_1.IntegrationManager,
         notification_service_1.NotificationService,
         client_1.BullMqClient])
@@ -4416,12 +4456,12 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
         if (!getCompanyVanity || !getCompanyVanity?.length) {
             throw new Error('Invalid LinkedIn company URL');
         }
-        const { elements } = await (await this.fetch(`https://api.linkedin.com/rest/organizations?q=vanityName&vanityName=${getCompanyVanity[1]}`, {
+        const { elements } = await (await this.fetch(`https://api.linkedin.com/v2/organizations?q=vanityName&vanityName=${getCompanyVanity[1]}`, {
             method: 'GET',
             headers: {
                 'Content-Type': 'application/json',
                 'X-Restli-Protocol-Version': '2.0.0',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${token}`,
             },
         })).json();
@@ -4433,12 +4473,12 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
         };
     }
     async uploadPicture(fileName, accessToken, personId, picture, type = 'personal') {
-        const { value: { uploadUrl, image, video, uploadInstructions, ...all }, } = await (await this.fetch(`https://api.linkedin.com/rest/${fileName.indexOf('mp4') > -1 ? 'videos' : 'images'}?action=initializeUpload`, {
+        const { value: { uploadUrl, image, video, uploadInstructions, ...all }, } = await (await this.fetch(`https://api.linkedin.com/v2/${fileName.indexOf('mp4') > -1 ? 'videos' : 'images'}?action=initializeUpload`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-Restli-Protocol-Version': '2.0.0',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
@@ -4464,7 +4504,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
                 method: 'PUT',
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     Authorization: `Bearer ${accessToken}`,
                     ...(fileName.indexOf('mp4') > -1
                         ? { 'Content-Type': 'application/octet-stream' }
@@ -4475,7 +4515,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
             etags.push(upload.headers.get('etag'));
         }
         if (fileName.indexOf('mp4') > -1) {
-            const a = await this.fetch('https://api.linkedin.com/rest/videos?action=finalizeUpload', {
+            const a = await this.fetch('https://api.linkedin.com/v2/videos?action=finalizeUpload', {
                 method: 'POST',
                 body: JSON.stringify({
                     finalizeUploadRequest: {
@@ -4486,7 +4526,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
                 }),
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${accessToken}`,
                 },
@@ -4634,7 +4674,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
     }
     async repostPostUsers(integration, originalIntegration, postId, information, isPersonal = true) {
         try {
-            await this.fetch(`https://api.linkedin.com/rest/posts`, {
+            await this.fetch(`https://api.linkedin.com/v2/posts`, {
                 body: JSON.stringify({
                     author: (isPersonal ? 'urn:li:person:' : `urn:li:organization:`) +
                         `${integration.internalId}`,
@@ -4655,7 +4695,7 @@ class LinkedinProvider extends social_abstract_1.SocialAbstract {
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
                     'Content-Type': 'application/json',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     Authorization: `Bearer ${integration.token}`,
                 },
             });
@@ -11171,6 +11211,7 @@ class TiktokProvider extends social_abstract_1.SocialAbstract {
         this.identifier = 'tiktok';
         this.name = 'Tiktok';
         this.isBetweenSteps = false;
+        this.convertToJPEG = true;
         this.scopes = [
             'user.info.basic',
             'video.publish',
@@ -11232,7 +11273,7 @@ class TiktokProvider extends social_abstract_1.SocialAbstract {
             code_verifier: params.codeVerifier,
             redirect_uri: `${process?.env?.FRONTEND_URL?.indexOf('https') === -1
                 ? 'https://redirectmeto.com/'
-                : ''}${process?.env?.FRONTEND_URL}/integrations/social/tiktok`
+                : ''}${process?.env?.FRONTEND_URL}/integrations/social/tiktok`,
         };
         const { access_token, refresh_token, scope } = await (await this.fetch('https://open.tiktokapis.com/v2/oauth/token/', {
             headers: {
@@ -11297,47 +11338,64 @@ class TiktokProvider extends social_abstract_1.SocialAbstract {
                 };
             }
             if (status === 'FAILED') {
-                throw new social_abstract_1.BadBody('titok-error-upload', JSON.stringify(post), {
-                    // @ts-ignore
-                    postDetails,
-                });
+                throw new social_abstract_1.BadBody('titok-error-upload', JSON.stringify(post), Buffer.from(JSON.stringify(post)));
             }
             await (0, timer_1.timer)(3000);
         }
     }
-    postingMethod(method) {
+    postingMethod(method, isPhoto) {
         switch (method) {
             case 'UPLOAD':
-                return '/inbox/video/init/';
+                return isPhoto ? '/content/init/' : '/inbox/video/init/';
             case 'DIRECT_POST':
             default:
-                return '/video/init/';
+                return isPhoto ? '/content/init/' : '/video/init/';
         }
     }
     async post(id, accessToken, postDetails, integration) {
         const [firstPost, ...comments] = postDetails;
-        const { data: { publish_id }, } = await (await this.fetch(`https://open.tiktokapis.com/v2/post/publish${this.postingMethod(firstPost.settings.content_posting_method)}`, {
+        const { data: { publish_id }, } = await (await this.fetch(`https://open.tiktokapis.com/v2/post/publish${this.postingMethod(firstPost.settings.content_posting_method, (firstPost?.media?.[0]?.url?.indexOf('mp4') || -1) === -1)}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json; charset=UTF-8',
                 Authorization: `Bearer ${accessToken}`,
             },
             body: JSON.stringify({
-                ...(firstPost.settings.content_posting_method === 'DIRECT_POST' ? {
-                    post_info: {
-                        title: firstPost.message,
-                        privacy_level: firstPost.settings.privacy_level,
-                        disable_duet: !firstPost.settings.duet,
-                        disable_comment: !firstPost.settings.comment,
-                        disable_stitch: !firstPost.settings.stitch,
-                        brand_content_toggle: firstPost.settings.brand_content_toggle,
-                        brand_organic_toggle: firstPost.settings.brand_organic_toggle,
+                ...(firstPost.settings.content_posting_method === 'DIRECT_POST'
+                    ? {
+                        post_info: {
+                            title: firstPost.message,
+                            privacy_level: firstPost.settings.privacy_level,
+                            disable_duet: !firstPost.settings.duet,
+                            disable_comment: !firstPost.settings.comment,
+                            disable_stitch: !firstPost.settings.stitch,
+                            brand_content_toggle: firstPost.settings.brand_content_toggle,
+                            brand_organic_toggle: firstPost.settings.brand_organic_toggle,
+                            ...((firstPost?.media?.[0]?.url?.indexOf('mp4') || -1) ===
+                                -1
+                                ? {
+                                    auto_add_music: firstPost.settings.autoAddMusic === 'yes',
+                                }
+                                : {}),
+                        },
                     }
-                } : {}),
-                source_info: {
-                    source: 'PULL_FROM_URL',
-                    video_url: firstPost?.media?.[0]?.url,
-                },
+                    : {}),
+                ...((firstPost?.media?.[0]?.url?.indexOf('mp4') || -1) > -1
+                    ? {
+                        source_info: {
+                            source: 'PULL_FROM_URL',
+                            video_url: firstPost?.media?.[0]?.url,
+                        },
+                    }
+                    : {
+                        source_info: {
+                            source: 'PULL_FROM_URL',
+                            photo_cover_index: 1,
+                            photo_images: firstPost.media?.map((p) => p.url),
+                        },
+                        post_mode: 'DIRECT_POST',
+                        media_type: 'PHOTO',
+                    }),
             }),
         })).json();
         const { url, id: videoId } = await this.uploadedVideoSuccess(integration.profile, publish_id, accessToken);
@@ -11815,7 +11873,7 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'X-Restli-Protocol-Version': '2.0.0',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
             },
         })).json();
         return (elements || []).map((e) => ({
@@ -11894,21 +11952,21 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
     async analytics(id, accessToken, date) {
         const endDate = (0, dayjs_1.default)().unix() * 1000;
         const startDate = (0, dayjs_1.default)().subtract(date, 'days').unix() * 1000;
-        const { elements } = await (await this.fetch(`https://api.linkedin.com/rest/organizationPageStatistics?q=organization&organization=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
+        const { elements } = await (await this.fetch(`https://api.linkedin.com/v2/organizationPageStatistics?q=organization&organization=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'Linkedin-Version': '202405',
                 'X-Restli-Protocol-Version': '2.0.0',
             },
         })).json();
-        const { elements: elements2 } = await (await this.fetch(`https://api.linkedin.com/rest/organizationalEntityFollowerStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
+        const { elements: elements2 } = await (await this.fetch(`https://api.linkedin.com/v2/organizationalEntityFollowerStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'Linkedin-Version': '202405',
                 'X-Restli-Protocol-Version': '2.0.0',
             },
         })).json();
-        const { elements: elements3 } = await (await this.fetch(`https://api.linkedin.com/rest/organizationalEntityShareStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
+        const { elements: elements3 } = await (await this.fetch(`https://api.linkedin.com/v2/organizationalEntityShareStatistics?q=organizationalEntity&organizationalEntity=${encodeURIComponent(`urn:li:organization:${id}`)}&timeIntervals=(timeRange:(start:${startDate},end:${endDate}),timeGranularityType:DAY)`, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 'Linkedin-Version': '202405',
@@ -11975,13 +12033,13 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
             headers: {
                 'X-Restli-Protocol-Version': '2.0.0',
                 'Content-Type': 'application/json',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${integration.token}`,
             },
         })).json();
         if (totalLikes >= +fields.likesAmount) {
             await (0, timer_1.timer)(2000);
-            await this.fetch(`https://api.linkedin.com/rest/posts`, {
+            await this.fetch(`https://api.linkedin.com/v2/posts`, {
                 body: JSON.stringify({
                     author: `urn:li:organization:${integration.internalId}`,
                     commentary: '',
@@ -12001,7 +12059,7 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
                 headers: {
                     'X-Restli-Protocol-Version': '2.0.0',
                     'Content-Type': 'application/json',
-                    'LinkedIn-Version': '202402',
+                    'LinkedIn-Version': '202501',
                     Authorization: `Bearer ${integration.token}`,
                 },
             });
@@ -12015,7 +12073,7 @@ class LinkedinPageProvider extends linkedin_provider_1.LinkedinProvider {
             headers: {
                 'X-Restli-Protocol-Version': '2.0.0',
                 'Content-Type': 'application/json',
-                'LinkedIn-Version': '202402',
+                'LinkedIn-Version': '202501',
                 Authorization: `Bearer ${integration.token}`,
             },
         })).json();
@@ -13933,26 +13991,143 @@ module.exports = require("dayjs/plugin/utc");
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AutopostRepository = void 0;
+const tslib_1 = __webpack_require__(1);
+const prisma_service_1 = __webpack_require__(9);
+const common_1 = __webpack_require__(5);
+const uuid_1 = __webpack_require__(31);
+let AutopostRepository = class AutopostRepository {
+    constructor(_autoPost) {
+        this._autoPost = _autoPost;
+    }
+    getTotal(orgId) {
+        return this._autoPost.model.autoPost.count({
+            where: {
+                organizationId: orgId,
+                deletedAt: null,
+            },
+        });
+    }
+    getAutoposts(orgId) {
+        return this._autoPost.model.autoPost.findMany({
+            where: {
+                organizationId: orgId,
+                deletedAt: null,
+            },
+        });
+    }
+    deleteAutopost(orgId, id) {
+        return this._autoPost.model.autoPost.update({
+            where: {
+                id,
+                organizationId: orgId,
+            },
+            data: {
+                deletedAt: new Date(),
+            },
+        });
+    }
+    getAutopost(id) {
+        return this._autoPost.model.autoPost.findUnique({
+            where: {
+                id,
+                deletedAt: null,
+            },
+        });
+    }
+    updateUrl(id, url) {
+        return this._autoPost.model.autoPost.update({
+            where: {
+                id,
+            },
+            data: {
+                lastUrl: url,
+            },
+        });
+    }
+    changeActive(orgId, id, active) {
+        return this._autoPost.model.autoPost.update({
+            where: {
+                id,
+                organizationId: orgId,
+            },
+            data: {
+                active,
+            },
+        });
+    }
+    async createAutopost(orgId, body, id) {
+        const { id: newId, active } = await this._autoPost.model.autoPost.upsert({
+            where: {
+                id: id || (0, uuid_1.v4)(),
+                organizationId: orgId,
+            },
+            create: {
+                organizationId: orgId,
+                url: body.url,
+                title: body.title,
+                integrations: JSON.stringify(body.integrations),
+                active: body.active,
+                content: body.content,
+                generateContent: body.generateContent,
+                addPicture: body.addPicture,
+                syncLast: body.syncLast,
+                onSlot: body.onSlot,
+                lastUrl: body.lastUrl,
+            },
+            update: {
+                url: body.url,
+                title: body.title,
+                integrations: JSON.stringify(body.integrations),
+                active: body.active,
+                content: body.content,
+                generateContent: body.generateContent,
+                addPicture: body.addPicture,
+                syncLast: body.syncLast,
+                onSlot: body.onSlot,
+                lastUrl: body.lastUrl,
+            },
+        });
+        return { id: newId, active };
+    }
+};
+exports.AutopostRepository = AutopostRepository;
+exports.AutopostRepository = AutopostRepository = tslib_1.__decorate([
+    (0, common_1.Injectable)(),
+    tslib_1.__metadata("design:paramtypes", [prisma_service_1.PrismaRepository])
+], AutopostRepository);
+
+
+/***/ }),
+/* 100 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PostsService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const posts_repository_1 = __webpack_require__(100);
+const posts_repository_1 = __webpack_require__(101);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
 const integration_manager_1 = __webpack_require__(55);
 const client_1 = __webpack_require__(10);
 const notification_service_1 = __webpack_require__(18);
 const lodash_1 = __webpack_require__(38);
-const messages_service_1 = __webpack_require__(104);
-const stripe_service_1 = __webpack_require__(106);
+const messages_service_1 = __webpack_require__(105);
+const stripe_service_1 = __webpack_require__(107);
 const integration_service_1 = __webpack_require__(43);
 const make_is_1 = __webpack_require__(16);
 const social_abstract_1 = __webpack_require__(62);
 const client_2 = __webpack_require__(26);
 const timer_1 = __webpack_require__(63);
 const utc_1 = tslib_1.__importDefault(__webpack_require__(98));
-const media_service_1 = __webpack_require__(111);
-const short_link_service_1 = __webpack_require__(117);
-const webhooks_service_1 = __webpack_require__(121);
+const media_service_1 = __webpack_require__(112);
+const short_link_service_1 = __webpack_require__(118);
+const webhooks_service_1 = __webpack_require__(122);
+const axios_1 = tslib_1.__importDefault(__webpack_require__(51));
+const sharp_1 = tslib_1.__importDefault(__webpack_require__(59));
+const upload_factory_1 = __webpack_require__(45);
+const stream_1 = __webpack_require__(124);
 dayjs_1.default.extend(utc_1.default);
 let PostsService = class PostsService {
     constructor(_postRepository, _workerServiceProducer, _integrationManager, _notificationService, _messagesService, _stripeService, _integrationService, _mediaService, _shortLinkService, _webhookService) {
@@ -13966,6 +14141,7 @@ let PostsService = class PostsService {
         this._mediaService = _mediaService;
         this._shortLinkService = _shortLinkService;
         this._webhookService = _webhookService;
+        this.storage = upload_factory_1.UploadFactory.createStorage();
     }
     async getStatistics(orgId, id) {
         const getPost = await this.getPostsRecursively(id, true, orgId, true);
@@ -13990,15 +14166,16 @@ let PostsService = class PostsService {
     async getPosts(orgId, query) {
         return this._postRepository.getPosts(orgId, query);
     }
-    async updateMedia(id, imagesList) {
+    async updateMedia(id, imagesList, convertToJPEG = false) {
         let imageUpdateNeeded = false;
-        const getImageList = (await Promise.all(imagesList.map(async (p) => {
+        const getImageList = await Promise.all((await Promise.all(imagesList.map(async (p) => {
             if (!p.path && p.id) {
                 imageUpdateNeeded = true;
                 return this._mediaService.getMediaById(p.id);
             }
             return p;
-        }))).map((m) => {
+        })))
+            .map((m) => {
             return {
                 ...m,
                 url: m.path.indexOf('http') === -1
@@ -14012,19 +14189,62 @@ let PostsService = class PostsService {
                     ? process.env.UPLOAD_DIRECTORY + m.path
                     : m.path,
             };
-        });
+        })
+            .map(async (m) => {
+            if (!convertToJPEG) {
+                return m;
+            }
+            if (m.path.indexOf('.png') > -1) {
+                imageUpdateNeeded = true;
+                const response = await axios_1.default.get(m.url, {
+                    responseType: 'arraybuffer',
+                });
+                const imageBuffer = Buffer.from(response.data);
+                // Use sharp to get the metadata of the image
+                const buffer = await (0, sharp_1.default)(imageBuffer)
+                    .jpeg({ quality: 100 })
+                    .toBuffer();
+                const { path, originalname } = await this.storage.uploadFile({
+                    buffer,
+                    mimetype: 'image/jpeg',
+                    size: buffer.length,
+                    path: '',
+                    fieldname: '',
+                    destination: '',
+                    stream: new stream_1.Readable(),
+                    filename: '',
+                    originalname: '',
+                    encoding: '',
+                });
+                return {
+                    ...m,
+                    name: originalname,
+                    url: path.indexOf('http') === -1
+                        ? process.env.FRONTEND_URL +
+                            '/' +
+                            process.env.NEXT_PUBLIC_UPLOAD_STATIC_DIRECTORY +
+                            path
+                        : path,
+                    type: 'image',
+                    path: path.indexOf('http') === -1
+                        ? process.env.UPLOAD_DIRECTORY + path
+                        : path,
+                };
+            }
+            return m;
+        }));
         if (imageUpdateNeeded) {
             await this._postRepository.updateImages(id, JSON.stringify(getImageList));
         }
         return getImageList;
     }
-    async getPost(orgId, id) {
+    async getPost(orgId, id, convertToJPEG = false) {
         const posts = await this.getPostsRecursively(id, true, orgId, true);
         const list = {
             group: posts?.[0]?.group,
             posts: await Promise.all(posts.map(async (post) => ({
                 ...post,
-                image: await this.updateMedia(post.id, JSON.parse(post.image || '[]')),
+                image: await this.updateMedia(post.id, JSON.parse(post.image || '[]'), convertToJPEG),
             }))),
             integrationPicture: posts[0]?.integration?.picture,
             integration: posts[0].integrationId,
@@ -14147,7 +14367,7 @@ let PostsService = class PostsService {
                 id: p.id,
                 message: p.content,
                 settings: JSON.parse(p.settings || '{}'),
-                media: await this.updateMedia(p.id, JSON.parse(p.image || '[]')),
+                media: await this.updateMedia(p.id, JSON.parse(p.image || '[]'), getIntegration.convertToJPEG),
             }))), integration);
             for (const post of publishedPosts) {
                 await this._postRepository.updatePost(post.id, post.postId, post.releaseURL);
@@ -14515,7 +14735,7 @@ exports.PostsService = PostsService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 100 */
+/* 101 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -14526,9 +14746,9 @@ const prisma_service_1 = __webpack_require__(9);
 const common_1 = __webpack_require__(5);
 const client_1 = __webpack_require__(10);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
-const isoWeek_1 = tslib_1.__importDefault(__webpack_require__(101));
-const weekOfYear_1 = tslib_1.__importDefault(__webpack_require__(102));
-const isSameOrAfter_1 = tslib_1.__importDefault(__webpack_require__(103));
+const isoWeek_1 = tslib_1.__importDefault(__webpack_require__(102));
+const weekOfYear_1 = tslib_1.__importDefault(__webpack_require__(103));
+const isSameOrAfter_1 = tslib_1.__importDefault(__webpack_require__(104));
 const utc_1 = tslib_1.__importDefault(__webpack_require__(98));
 const uuid_1 = __webpack_require__(31);
 dayjs_1.default.extend(isoWeek_1.default);
@@ -15122,25 +15342,25 @@ exports.PostsRepository = PostsRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 101 */
+/* 102 */
 /***/ ((module) => {
 
 module.exports = require("dayjs/plugin/isoWeek");
 
 /***/ }),
-/* 102 */
+/* 103 */
 /***/ ((module) => {
 
 module.exports = require("dayjs/plugin/weekOfYear");
 
 /***/ }),
-/* 103 */
+/* 104 */
 /***/ ((module) => {
 
 module.exports = require("dayjs/plugin/isSameOrAfter");
 
 /***/ }),
-/* 104 */
+/* 105 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -15148,7 +15368,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.MessagesService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const messages_repository_1 = __webpack_require__(105);
+const messages_repository_1 = __webpack_require__(106);
 const organization_repository_1 = __webpack_require__(11);
 const notification_service_1 = __webpack_require__(18);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
@@ -15277,7 +15497,7 @@ exports.MessagesService = MessagesService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 105 */
+/* 106 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16055,25 +16275,25 @@ exports.MessagesRepository = MessagesRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 106 */
+/* 107 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.StripeService = void 0;
 const tslib_1 = __webpack_require__(1);
-const stripe_1 = tslib_1.__importDefault(__webpack_require__(107));
+const stripe_1 = tslib_1.__importDefault(__webpack_require__(108));
 const common_1 = __webpack_require__(5);
 const subscription_service_1 = __webpack_require__(40);
 const organization_service_1 = __webpack_require__(17);
 const make_is_1 = __webpack_require__(16);
 const lodash_1 = __webpack_require__(38);
-const messages_service_1 = __webpack_require__(104);
+const messages_service_1 = __webpack_require__(105);
 const pricing_1 = __webpack_require__(41);
 const auth_service_1 = __webpack_require__(12);
-const track_service_1 = __webpack_require__(108);
+const track_service_1 = __webpack_require__(109);
 const users_service_1 = __webpack_require__(33);
-const track_enum_1 = __webpack_require__(109);
+const track_enum_1 = __webpack_require__(110);
 const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY, {
     apiVersion: '2024-04-10',
 });
@@ -16608,22 +16828,22 @@ exports.StripeService = StripeService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 107 */
+/* 108 */
 /***/ ((module) => {
 
 module.exports = require("stripe");
 
 /***/ }),
-/* 108 */
+/* 109 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TrackService = void 0;
 const tslib_1 = __webpack_require__(1);
-const track_enum_1 = __webpack_require__(109);
+const track_enum_1 = __webpack_require__(110);
 const common_1 = __webpack_require__(5);
-const facebook_nodejs_business_sdk_1 = __webpack_require__(110);
+const facebook_nodejs_business_sdk_1 = __webpack_require__(111);
 const crypto_1 = __webpack_require__(15);
 const access_token = process.env.FACEBOOK_PIXEL_ACCESS_TOKEN;
 const pixel_id = process.env.NEXT_PUBLIC_FACEBOOK_PIXEL;
@@ -16683,7 +16903,7 @@ exports.TrackService = TrackService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 109 */
+/* 110 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -16700,13 +16920,13 @@ var TrackEnum;
 
 
 /***/ }),
-/* 110 */
+/* 111 */
 /***/ ((module) => {
 
 module.exports = require("facebook-nodejs-business-sdk");
 
 /***/ }),
-/* 111 */
+/* 112 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16714,8 +16934,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.MediaService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const media_repository_1 = __webpack_require__(112);
-const openai_service_1 = __webpack_require__(113);
+const media_repository_1 = __webpack_require__(113);
+const openai_service_1 = __webpack_require__(114);
 const subscription_service_1 = __webpack_require__(40);
 let MediaService = class MediaService {
     constructor(_mediaRepository, _openAi, _subscriptionService) {
@@ -16755,7 +16975,7 @@ exports.MediaService = MediaService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 112 */
+/* 113 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16836,7 +17056,7 @@ exports.MediaRepository = MediaRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 113 */
+/* 114 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16844,10 +17064,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.OpenaiService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const openai_1 = tslib_1.__importDefault(__webpack_require__(114));
+const openai_1 = tslib_1.__importDefault(__webpack_require__(115));
 const lodash_1 = __webpack_require__(38);
-const zod_1 = __webpack_require__(115);
-const zod_2 = __webpack_require__(116);
+const zod_1 = __webpack_require__(116);
+const zod_2 = __webpack_require__(117);
 const openai = new openai_1.default({
     apiKey: process.env.OPENAI_API_KEY || 'sk-proj-',
 });
@@ -16954,25 +17174,25 @@ exports.OpenaiService = OpenaiService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 114 */
+/* 115 */
 /***/ ((module) => {
 
 module.exports = require("openai");
 
 /***/ }),
-/* 115 */
+/* 116 */
 /***/ ((module) => {
 
 module.exports = require("openai/helpers/zod");
 
 /***/ }),
-/* 116 */
+/* 117 */
 /***/ ((module) => {
 
 module.exports = require("zod");
 
 /***/ }),
-/* 117 */
+/* 118 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -16980,10 +17200,10 @@ var ShortLinkService_1;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ShortLinkService = void 0;
 const tslib_1 = __webpack_require__(1);
-const dub_1 = __webpack_require__(118);
-const empty_1 = __webpack_require__(119);
+const dub_1 = __webpack_require__(119);
+const empty_1 = __webpack_require__(120);
 const common_1 = __webpack_require__(5);
-const short_io_1 = __webpack_require__(120);
+const short_io_1 = __webpack_require__(121);
 const getProvider = () => {
     if (process.env.DUB_TOKEN) {
         return new dub_1.Dub();
@@ -17087,7 +17307,7 @@ exports.ShortLinkService = ShortLinkService = ShortLinkService_1 = tslib_1.__dec
 
 
 /***/ }),
-/* 118 */
+/* 119 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -17145,7 +17365,7 @@ exports.Dub = Dub;
 
 
 /***/ }),
-/* 119 */
+/* 120 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -17172,7 +17392,7 @@ exports.Empty = Empty;
 
 
 /***/ }),
-/* 120 */
+/* 121 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -17240,7 +17460,7 @@ exports.ShortIo = ShortIo;
 
 
 /***/ }),
-/* 121 */
+/* 122 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17248,10 +17468,10 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.WebhooksService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const webhooks_repository_1 = __webpack_require__(122);
+const webhooks_repository_1 = __webpack_require__(123);
 const redis_service_1 = __webpack_require__(29);
 const client_1 = __webpack_require__(26);
-const posts_repository_1 = __webpack_require__(100);
+const posts_repository_1 = __webpack_require__(101);
 let WebhooksService = class WebhooksService {
     constructor(_webhooksRepository, _postsRepository, _workerServiceProducer) {
         this._webhooksRepository = _webhooksRepository;
@@ -17338,7 +17558,7 @@ exports.WebhooksService = WebhooksService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 122 */
+/* 123 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17433,7 +17653,13 @@ exports.WebhooksRepository = WebhooksRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 123 */
+/* 124 */
+/***/ ((module) => {
+
+module.exports = require("stream");
+
+/***/ }),
+/* 125 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17486,7 +17712,7 @@ exports.ItemUserRepository = ItemUserRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 124 */
+/* 126 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17494,7 +17720,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ItemUserService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const item_user_repository_1 = __webpack_require__(123);
+const item_user_repository_1 = __webpack_require__(125);
 let ItemUserService = class ItemUserService {
     constructor(_itemUserRepository) {
         this._itemUserRepository = _itemUserRepository;
@@ -17514,7 +17740,7 @@ exports.ItemUserService = ItemUserService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 125 */
+/* 127 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17522,7 +17748,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ExtractContentService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const jsdom_1 = __webpack_require__(126);
+const jsdom_1 = __webpack_require__(128);
 function findDepth(element) {
     let depth = 0;
     let elementer = element;
@@ -17601,13 +17827,13 @@ exports.ExtractContentService = ExtractContentService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 126 */
+/* 128 */
 /***/ ((module) => {
 
 module.exports = require("jsdom");
 
 /***/ }),
-/* 127 */
+/* 129 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17615,7 +17841,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AgenciesService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const agencies_repository_1 = __webpack_require__(128);
+const agencies_repository_1 = __webpack_require__(130);
 const notification_service_1 = __webpack_require__(18);
 let AgenciesService = class AgenciesService {
     constructor(_agenciesRepository, _notificationService) {
@@ -17774,7 +18000,7 @@ exports.AgenciesService = AgenciesService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 128 */
+/* 130 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17946,7 +18172,7 @@ exports.AgenciesRepository = AgenciesRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 129 */
+/* 131 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -17998,7 +18224,7 @@ exports.SignatureRepository = SignatureRepository = tslib_1.__decorate([
 
 
 /***/ }),
-/* 130 */
+/* 132 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18006,7 +18232,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SignatureService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const signature_repository_1 = __webpack_require__(129);
+const signature_repository_1 = __webpack_require__(131);
 let SignatureService = class SignatureService {
     constructor(_signatureRepository) {
         this._signatureRepository = _signatureRepository;
@@ -18029,7 +18255,324 @@ exports.SignatureService = SignatureService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 131 */
+/* 133 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+var AutopostService_1;
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AutopostService = void 0;
+const tslib_1 = __webpack_require__(1);
+const common_1 = __webpack_require__(5);
+const autopost_repository_1 = __webpack_require__(99);
+const client_1 = __webpack_require__(26);
+const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
+const langgraph_1 = __webpack_require__(134);
+const striptags_1 = tslib_1.__importDefault(__webpack_require__(135));
+const openai_1 = __webpack_require__(136);
+const jsdom_1 = __webpack_require__(128);
+const zod_1 = __webpack_require__(117);
+const prompts_1 = __webpack_require__(137);
+const posts_service_1 = __webpack_require__(100);
+const rss_parser_1 = tslib_1.__importDefault(__webpack_require__(138));
+const integration_service_1 = __webpack_require__(43);
+const make_is_1 = __webpack_require__(16);
+const parser = new rss_parser_1.default();
+const model = new openai_1.ChatOpenAI({
+    apiKey: process.env.OPENAI_API_KEY || 'sk-proj-',
+    model: 'gpt-4o-2024-08-06',
+    temperature: 0.7,
+});
+const dalle = new openai_1.DallEAPIWrapper({
+    apiKey: process.env.OPENAI_API_KEY || 'sk-proj-',
+    model: 'dall-e-3',
+});
+const generateContent = zod_1.z.object({
+    socialMediaPostContent: zod_1.z
+        .string()
+        .describe('Content for social media posts max 120 chars'),
+});
+const dallePrompt = zod_1.z.object({
+    generatedTextToBeSentToDallE: zod_1.z
+        .string()
+        .describe('Generated prompt from description to be sent to DallE'),
+});
+let AutopostService = AutopostService_1 = class AutopostService {
+    constructor(_autopostsRepository, _workerServiceProducer, _integrationService, _postsService) {
+        this._autopostsRepository = _autopostsRepository;
+        this._workerServiceProducer = _workerServiceProducer;
+        this._integrationService = _integrationService;
+        this._postsService = _postsService;
+    }
+    async stopAll(org) {
+        const getAll = (await this.getAutoposts(org)).filter(f => f.active);
+        for (const autopost of getAll) {
+            await this.changeActive(org, autopost.id, false);
+        }
+    }
+    getAutoposts(orgId) {
+        return this._autopostsRepository.getAutoposts(orgId);
+    }
+    async createAutopost(orgId, body, id) {
+        const data = await this._autopostsRepository.createAutopost(orgId, body, id);
+        await this.processCron(body.active, data.id);
+        return data;
+    }
+    async changeActive(orgId, id, active) {
+        const data = await this._autopostsRepository.changeActive(orgId, id, active);
+        await this.processCron(active, id);
+        return data;
+    }
+    async processCron(active, id) {
+        if (active) {
+            return this._workerServiceProducer.emit('cron', {
+                id,
+                options: {
+                    every: 3600000,
+                    immediately: true,
+                },
+                payload: {
+                    id,
+                },
+            });
+        }
+        return this._workerServiceProducer.deleteScheduler('cron', id);
+    }
+    async deleteAutopost(orgId, id) {
+        const data = await this._autopostsRepository.deleteAutopost(orgId, id);
+        await this.processCron(false, id);
+        return data;
+    }
+    async loadXML(url) {
+        try {
+            const { items } = await parser.parseURL(url);
+            const findLast = items.reduce((all, current) => {
+                if ((0, dayjs_1.default)(current.pubDate).isAfter(all.pubDate)) {
+                    return current;
+                }
+                return all;
+            }, { pubDate: (0, dayjs_1.default)().subtract(100, 'years') });
+            return {
+                success: true,
+                date: findLast.pubDate,
+                url: findLast.link,
+                description: (0, striptags_1.default)(findLast?.['content:encoded'] || findLast?.content || findLast?.description || '')
+                    .replace(/\n/g, ' ')
+                    .trim(),
+            };
+        }
+        catch (err) {
+            /** sent **/
+        }
+        return { success: false };
+    }
+    async loadUrl(url) {
+        try {
+            const loadDom = new jsdom_1.JSDOM(await (await fetch(url)).text());
+            loadDom.window.document
+                .querySelectorAll('script')
+                .forEach((s) => s.remove());
+            loadDom.window.document
+                .querySelectorAll('style')
+                .forEach((s) => s.remove());
+            // remove all html, script and styles
+            return (0, striptags_1.default)(loadDom.window.document.body.innerHTML);
+        }
+        catch (err) {
+            return '';
+        }
+    }
+    async generateDescription(state) {
+        if (!state.body.generateContent) {
+            return {
+                ...state,
+                description: state.body.content,
+            };
+        }
+        const description = state.load.description || (await this.loadUrl(state.load.url));
+        if (!description) {
+            return {
+                ...state,
+                description: '',
+            };
+        }
+        const structuredOutput = model.withStructuredOutput(generateContent);
+        const { socialMediaPostContent } = await prompts_1.ChatPromptTemplate.fromTemplate(`
+        You are an assistant that gets raw 'description' of a content and generate a social media post content.
+        Rules:
+        - Maximum 100 chars
+        - Try to make it a short as possible to fit any social media
+        - Add line breaks between sentences (\\n) 
+        - Don't add hashtags
+        - Add emojis when needed
+        
+        'description':
+        {content}
+      `)
+            .pipe(structuredOutput)
+            .invoke({
+            content: description,
+        });
+        return {
+            ...state,
+            description: socialMediaPostContent,
+        };
+    }
+    async generatePicture(state) {
+        const structuredOutput = model.withStructuredOutput(dallePrompt);
+        const { generatedTextToBeSentToDallE } = await prompts_1.ChatPromptTemplate.fromTemplate(`
+        You are an assistant that gets description and generate a prompt that will be sent to DallE to generate pictures.
+        
+        content:
+        {content}
+      `)
+            .pipe(structuredOutput)
+            .invoke({
+            content: state.load.description || state.description,
+        });
+        const image = await dalle.invoke(generatedTextToBeSentToDallE);
+        return { ...state, image };
+    }
+    async schedulePost(state) {
+        const nextTime = await this._postsService.findFreeDateTime(state.integrations[0].organizationId);
+        await this._postsService.createPost(state.integrations[0].organizationId, {
+            date: nextTime + 'Z',
+            order: (0, make_is_1.makeId)(10),
+            shortLink: false,
+            type: 'draft',
+            tags: [],
+            posts: state.integrations.map((i) => ({
+                settings: {
+                    subtitle: '',
+                    title: '',
+                    tags: [],
+                    subreddit: [],
+                },
+                group: (0, make_is_1.makeId)(10),
+                integration: { id: i.id },
+                value: [
+                    {
+                        id: (0, make_is_1.makeId)(10),
+                        content: state.description.replace(/\n/g, '\n\n') + '\n\n' + state.load.url,
+                        image: !state.image
+                            ? []
+                            : [
+                                {
+                                    id: (0, make_is_1.makeId)(10),
+                                    name: (0, make_is_1.makeId)(10),
+                                    path: state.image,
+                                    organizationId: state.integrations[0].organizationId,
+                                },
+                            ],
+                    },
+                ],
+            })),
+        });
+    }
+    async updateUrl(state) {
+        await this._autopostsRepository.updateUrl(state.id, state.load.url);
+    }
+    async startAutopost(id) {
+        const getPost = await this._autopostsRepository.getAutopost(id);
+        if (!getPost || !getPost.active) {
+            return;
+        }
+        const load = await this.loadXML(getPost.url);
+        if (!load.success || load.url === getPost.lastUrl) {
+            return;
+        }
+        const integrations = await this._integrationService.getIntegrationsList(getPost.organizationId);
+        const parseIntegrations = JSON.parse(getPost.integrations || '[]') || [];
+        const neededIntegrations = integrations.filter((i) => parseIntegrations.some((ii) => ii.id === i.id));
+        const integrationsToSend = parseIntegrations.length === 0 ? integrations : neededIntegrations;
+        if (integrationsToSend.length === 0) {
+            return;
+        }
+        const state = AutopostService_1.state();
+        const workflow = state
+            .addNode('generate-description', this.generateDescription.bind(this))
+            .addNode('generate-picture', this.generatePicture.bind(this))
+            .addNode('schedule-post', this.schedulePost.bind(this))
+            .addNode('update-url', this.updateUrl.bind(this))
+            .addEdge(langgraph_1.START, 'generate-description')
+            .addConditionalEdges('generate-description', (state) => {
+            if (!state.description) {
+                return 'schedule-post';
+            }
+            if (state.body.addPicture) {
+                return 'generate-picture';
+            }
+            return 'schedule-post';
+        })
+            .addEdge('generate-picture', 'schedule-post')
+            .addEdge('schedule-post', 'update-url')
+            .addEdge('update-url', langgraph_1.END);
+        const app = workflow.compile();
+        await app.invoke({
+            messages: [],
+            id,
+            body: getPost,
+            load,
+            integrations: integrationsToSend,
+        });
+    }
+};
+exports.AutopostService = AutopostService;
+AutopostService.state = () => new langgraph_1.StateGraph({
+    channels: {
+        messages: {
+            reducer: (currentState, updateValue) => currentState.concat(updateValue),
+            default: () => [],
+        },
+        body: null,
+        description: null,
+        load: null,
+        image: null,
+        integrations: null,
+        id: null,
+    },
+});
+exports.AutopostService = AutopostService = AutopostService_1 = tslib_1.__decorate([
+    (0, common_1.Injectable)(),
+    tslib_1.__metadata("design:paramtypes", [autopost_repository_1.AutopostRepository,
+        client_1.BullMqClient,
+        integration_service_1.IntegrationService,
+        posts_service_1.PostsService])
+], AutopostService);
+
+
+/***/ }),
+/* 134 */
+/***/ ((module) => {
+
+module.exports = require("@langchain/langgraph");
+
+/***/ }),
+/* 135 */
+/***/ ((module) => {
+
+module.exports = require("striptags");
+
+/***/ }),
+/* 136 */
+/***/ ((module) => {
+
+module.exports = require("@langchain/openai");
+
+/***/ }),
+/* 137 */
+/***/ ((module) => {
+
+module.exports = require("@langchain/core/prompts");
+
+/***/ }),
+/* 138 */
+/***/ ((module) => {
+
+module.exports = require("rss-parser");
+
+/***/ }),
+/* 139 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18037,37 +18580,38 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ApiModule = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const auth_controller_1 = __webpack_require__(132);
-const auth_service_1 = __webpack_require__(136);
-const users_controller_1 = __webpack_require__(151);
-const auth_middleware_1 = __webpack_require__(160);
-const stripe_controller_1 = __webpack_require__(161);
-const stripe_service_1 = __webpack_require__(106);
-const analytics_controller_1 = __webpack_require__(163);
-const permissions_guard_1 = __webpack_require__(165);
-const permissions_service_1 = __webpack_require__(155);
-const integrations_controller_1 = __webpack_require__(167);
+const auth_controller_1 = __webpack_require__(140);
+const auth_service_1 = __webpack_require__(144);
+const users_controller_1 = __webpack_require__(159);
+const auth_middleware_1 = __webpack_require__(168);
+const stripe_controller_1 = __webpack_require__(169);
+const stripe_service_1 = __webpack_require__(107);
+const analytics_controller_1 = __webpack_require__(171);
+const permissions_guard_1 = __webpack_require__(173);
+const permissions_service_1 = __webpack_require__(163);
+const integrations_controller_1 = __webpack_require__(175);
 const integration_manager_1 = __webpack_require__(55);
-const settings_controller_1 = __webpack_require__(175);
-const posts_controller_1 = __webpack_require__(177);
-const media_controller_1 = __webpack_require__(202);
-const upload_module_1 = __webpack_require__(207);
-const billing_controller_1 = __webpack_require__(208);
-const notifications_controller_1 = __webpack_require__(211);
-const marketplace_controller_1 = __webpack_require__(212);
-const messages_controller_1 = __webpack_require__(219);
-const openai_service_1 = __webpack_require__(113);
-const extract_content_service_1 = __webpack_require__(125);
-const codes_service_1 = __webpack_require__(162);
-const copilot_controller_1 = __webpack_require__(221);
-const agencies_controller_1 = __webpack_require__(223);
-const public_controller_1 = __webpack_require__(225);
-const root_controller_1 = __webpack_require__(229);
-const track_service_1 = __webpack_require__(108);
-const short_link_service_1 = __webpack_require__(117);
-const nowpayments_1 = __webpack_require__(210);
-const webhooks_controller_1 = __webpack_require__(230);
-const signature_controller_1 = __webpack_require__(232);
+const settings_controller_1 = __webpack_require__(183);
+const posts_controller_1 = __webpack_require__(185);
+const media_controller_1 = __webpack_require__(207);
+const upload_module_1 = __webpack_require__(212);
+const billing_controller_1 = __webpack_require__(213);
+const notifications_controller_1 = __webpack_require__(216);
+const marketplace_controller_1 = __webpack_require__(217);
+const messages_controller_1 = __webpack_require__(224);
+const openai_service_1 = __webpack_require__(114);
+const extract_content_service_1 = __webpack_require__(127);
+const codes_service_1 = __webpack_require__(170);
+const copilot_controller_1 = __webpack_require__(226);
+const agencies_controller_1 = __webpack_require__(228);
+const public_controller_1 = __webpack_require__(230);
+const root_controller_1 = __webpack_require__(234);
+const track_service_1 = __webpack_require__(109);
+const short_link_service_1 = __webpack_require__(118);
+const nowpayments_1 = __webpack_require__(215);
+const webhooks_controller_1 = __webpack_require__(235);
+const signature_controller_1 = __webpack_require__(237);
+const autopost_controller_1 = __webpack_require__(239);
 const authenticatedController = [
     users_controller_1.UsersController,
     analytics_controller_1.AnalyticsController,
@@ -18083,6 +18627,7 @@ const authenticatedController = [
     agencies_controller_1.AgenciesController,
     webhooks_controller_1.WebhookController,
     signature_controller_1.SignatureController,
+    autopost_controller_1.AutopostController,
 ];
 let ApiModule = class ApiModule {
     configure(consumer) {
@@ -18122,7 +18667,7 @@ exports.ApiModule = ApiModule = tslib_1.__decorate([
 
 
 /***/ }),
-/* 132 */
+/* 140 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18131,16 +18676,16 @@ exports.AuthController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const create_org_user_dto_1 = __webpack_require__(133);
-const login_user_dto_1 = __webpack_require__(135);
-const auth_service_1 = __webpack_require__(136);
-const forgot_return_password_dto_1 = __webpack_require__(145);
-const forgot_password_dto_1 = __webpack_require__(146);
+const create_org_user_dto_1 = __webpack_require__(141);
+const login_user_dto_1 = __webpack_require__(143);
+const auth_service_1 = __webpack_require__(144);
+const forgot_return_password_dto_1 = __webpack_require__(153);
+const forgot_password_dto_1 = __webpack_require__(154);
 const swagger_1 = __webpack_require__(3);
-const subdomain_management_1 = __webpack_require__(147);
+const subdomain_management_1 = __webpack_require__(155);
 const email_service_1 = __webpack_require__(20);
-const nestjs_real_ip_1 = __webpack_require__(149);
-const user_agent_1 = __webpack_require__(150);
+const nestjs_real_ip_1 = __webpack_require__(157);
+const user_agent_1 = __webpack_require__(158);
 let AuthController = class AuthController {
     constructor(_authService, _emailService) {
         this._authService = _authService;
@@ -18395,7 +18940,7 @@ exports.AuthController = AuthController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 133 */
+/* 141 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18403,7 +18948,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CreateOrgUserDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 const client_1 = __webpack_require__(10);
 class CreateOrgUserDto {
     static _OPENAPI_METADATA_FACTORY() {
@@ -18446,13 +18991,13 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 134 */
+/* 142 */
 /***/ ((module) => {
 
 module.exports = require("class-validator");
 
 /***/ }),
-/* 135 */
+/* 143 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18460,7 +19005,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LoginUserDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 const client_1 = __webpack_require__(10);
 class LoginUserDto {
     static _OPENAPI_METADATA_FACTORY() {
@@ -18494,7 +19039,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 136 */
+/* 144 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18503,13 +19048,13 @@ exports.AuthService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
 const client_1 = __webpack_require__(10);
-const create_org_user_dto_1 = __webpack_require__(133);
+const create_org_user_dto_1 = __webpack_require__(141);
 const users_service_1 = __webpack_require__(33);
 const organization_service_1 = __webpack_require__(17);
 const auth_service_1 = __webpack_require__(12);
-const providers_factory_1 = __webpack_require__(137);
+const providers_factory_1 = __webpack_require__(145);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
-const newsletter_service_1 = __webpack_require__(144);
+const newsletter_service_1 = __webpack_require__(152);
 const notification_service_1 = __webpack_require__(18);
 const email_service_1 = __webpack_require__(20);
 let AuthService = class AuthService {
@@ -18659,17 +19204,17 @@ exports.AuthService = AuthService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 137 */
+/* 145 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ProvidersFactory = void 0;
 const client_1 = __webpack_require__(10);
-const github_provider_1 = __webpack_require__(138);
-const google_provider_1 = __webpack_require__(139);
-const farcaster_provider_1 = __webpack_require__(140);
-const wallet_provider_1 = __webpack_require__(141);
+const github_provider_1 = __webpack_require__(146);
+const google_provider_1 = __webpack_require__(147);
+const farcaster_provider_1 = __webpack_require__(148);
+const wallet_provider_1 = __webpack_require__(149);
 class ProvidersFactory {
     static loadProvider(provider) {
         switch (provider) {
@@ -18688,7 +19233,7 @@ exports.ProvidersFactory = ProvidersFactory;
 
 
 /***/ }),
-/* 138 */
+/* 146 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -18735,7 +19280,7 @@ exports.GithubProvider = GithubProvider;
 
 
 /***/ }),
-/* 139 */
+/* 147 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18798,7 +19343,7 @@ exports.GoogleProvider = GoogleProvider;
 
 
 /***/ }),
-/* 140 */
+/* 148 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18842,7 +19387,7 @@ exports.FarcasterProvider = FarcasterProvider;
 
 
 /***/ }),
-/* 141 */
+/* 149 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18851,8 +19396,8 @@ exports.WalletProvider = void 0;
 const tslib_1 = __webpack_require__(1);
 const crypto_1 = __webpack_require__(15);
 const redis_service_1 = __webpack_require__(29);
-const bs58_1 = tslib_1.__importDefault(__webpack_require__(142));
-const tweetnacl_1 = tslib_1.__importDefault(__webpack_require__(143));
+const bs58_1 = tslib_1.__importDefault(__webpack_require__(150));
+const tweetnacl_1 = tslib_1.__importDefault(__webpack_require__(151));
 function hexToUint8Array(hex) {
     // Remove any potential "0x" prefix
     if (hex.startsWith('0x')) {
@@ -18917,19 +19462,19 @@ exports.WalletProvider = WalletProvider;
 
 
 /***/ }),
-/* 142 */
+/* 150 */
 /***/ ((module) => {
 
 module.exports = require("bs58");
 
 /***/ }),
-/* 143 */
+/* 151 */
 /***/ ((module) => {
 
 module.exports = require("tweetnacl");
 
 /***/ }),
-/* 144 */
+/* 152 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -18964,7 +19509,7 @@ exports.NewsletterService = NewsletterService;
 
 
 /***/ }),
-/* 145 */
+/* 153 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -18972,7 +19517,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ForgotReturnPasswordDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 const make_is_1 = __webpack_require__(16);
 class ForgotReturnPasswordDto {
     static _OPENAPI_METADATA_FACTORY() {
@@ -19004,7 +19549,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 146 */
+/* 154 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19012,7 +19557,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ForgotPasswordDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class ForgotPasswordDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { email: { required: true, type: () => String } };
@@ -19028,13 +19573,13 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 147 */
+/* 155 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getCookieUrlFromDomain = getCookieUrlFromDomain;
-const tldts_1 = __webpack_require__(148);
+const tldts_1 = __webpack_require__(156);
 function getCookieUrlFromDomain(domain) {
     const url = (0, tldts_1.parse)(domain);
     return url.domain ? "." + url.domain : url.hostname;
@@ -19042,19 +19587,19 @@ function getCookieUrlFromDomain(domain) {
 
 
 /***/ }),
-/* 148 */
+/* 156 */
 /***/ ((module) => {
 
 module.exports = require("tldts");
 
 /***/ }),
-/* 149 */
+/* 157 */
 /***/ ((module) => {
 
 module.exports = require("nestjs-real-ip");
 
 /***/ }),
-/* 150 */
+/* 158 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19068,7 +19613,7 @@ exports.UserAgent = (0, common_1.createParamDecorator)((data, ctx) => {
 
 
 /***/ }),
-/* 151 */
+/* 159 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19077,23 +19622,23 @@ exports.UsersController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const user_from_request_1 = __webpack_require__(152);
+const user_from_request_1 = __webpack_require__(160);
 const subscription_service_1 = __webpack_require__(40);
-const org_from_request_1 = __webpack_require__(153);
-const stripe_service_1 = __webpack_require__(106);
-const auth_service_1 = __webpack_require__(136);
+const org_from_request_1 = __webpack_require__(161);
+const stripe_service_1 = __webpack_require__(107);
+const auth_service_1 = __webpack_require__(144);
 const organization_service_1 = __webpack_require__(17);
-const permissions_ability_1 = __webpack_require__(154);
-const permissions_service_1 = __webpack_require__(155);
-const subdomain_management_1 = __webpack_require__(147);
+const permissions_ability_1 = __webpack_require__(162);
+const permissions_service_1 = __webpack_require__(163);
+const subdomain_management_1 = __webpack_require__(155);
 const pricing_1 = __webpack_require__(41);
 const swagger_1 = __webpack_require__(3);
 const users_service_1 = __webpack_require__(33);
-const user_details_dto_1 = __webpack_require__(157);
-const exception_filter_1 = __webpack_require__(159);
-const nestjs_real_ip_1 = __webpack_require__(149);
-const user_agent_1 = __webpack_require__(150);
-const track_service_1 = __webpack_require__(108);
+const user_details_dto_1 = __webpack_require__(165);
+const exception_filter_1 = __webpack_require__(167);
+const nestjs_real_ip_1 = __webpack_require__(157);
+const user_agent_1 = __webpack_require__(158);
+const track_service_1 = __webpack_require__(109);
 const make_is_1 = __webpack_require__(16);
 let UsersController = class UsersController {
     constructor(_subscriptionService, _stripeService, _authService, _orgService, _userService, _trackService) {
@@ -19383,7 +19928,7 @@ exports.UsersController = UsersController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 152 */
+/* 160 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19397,7 +19942,7 @@ exports.GetUserFromRequest = (0, common_1.createParamDecorator)((data, ctx) => {
 
 
 /***/ }),
-/* 153 */
+/* 161 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19411,7 +19956,7 @@ exports.GetOrgFromRequest = (0, common_1.createParamDecorator)((data, ctx) => {
 
 
 /***/ }),
-/* 154 */
+/* 162 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19424,21 +19969,21 @@ exports.CheckPolicies = CheckPolicies;
 
 
 /***/ }),
-/* 155 */
+/* 163 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PermissionsService = exports.AuthorizationActions = exports.Sections = void 0;
 const tslib_1 = __webpack_require__(1);
-const ability_1 = __webpack_require__(156);
+const ability_1 = __webpack_require__(164);
 const common_1 = __webpack_require__(5);
 const pricing_1 = __webpack_require__(41);
 const subscription_service_1 = __webpack_require__(40);
-const posts_service_1 = __webpack_require__(99);
+const posts_service_1 = __webpack_require__(100);
 const integration_service_1 = __webpack_require__(43);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
-const webhooks_service_1 = __webpack_require__(121);
+const webhooks_service_1 = __webpack_require__(122);
 var Sections;
 (function (Sections) {
     Sections["CHANNEL"] = "channel";
@@ -19569,13 +20114,13 @@ exports.PermissionsService = PermissionsService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 156 */
+/* 164 */
 /***/ ((module) => {
 
 module.exports = require("@casl/ability");
 
 /***/ }),
-/* 157 */
+/* 165 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19583,11 +20128,11 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.UserDetailDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const media_dto_1 = __webpack_require__(158);
-const class_validator_1 = __webpack_require__(134);
+const media_dto_1 = __webpack_require__(166);
+const class_validator_1 = __webpack_require__(142);
 class UserDetailDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { fullname: { required: true, type: () => String, minLength: 3 }, bio: { required: true, type: () => String }, picture: { required: true, type: () => (__webpack_require__(158).MediaDto) } };
+        return { fullname: { required: true, type: () => String, minLength: 3 }, bio: { required: true, type: () => String }, picture: { required: true, type: () => (__webpack_require__(166).MediaDto) } };
     }
 }
 exports.UserDetailDto = UserDetailDto;
@@ -19609,7 +20154,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 158 */
+/* 166 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19617,7 +20162,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.MediaDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class MediaDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { id: { required: true, type: () => String }, path: { required: true, type: () => String } };
@@ -19637,7 +20182,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 159 */
+/* 167 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19645,7 +20190,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HttpExceptionFilter = exports.HttpForbiddenException = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const auth_middleware_1 = __webpack_require__(160);
+const auth_middleware_1 = __webpack_require__(168);
 class HttpForbiddenException extends common_1.HttpException {
     constructor() {
         super('Forbidden', 403);
@@ -19667,7 +20212,7 @@ exports.HttpExceptionFilter = HttpExceptionFilter = tslib_1.__decorate([
 
 
 /***/ }),
-/* 160 */
+/* 168 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19678,8 +20223,8 @@ const common_1 = __webpack_require__(5);
 const auth_service_1 = __webpack_require__(12);
 const organization_service_1 = __webpack_require__(17);
 const users_service_1 = __webpack_require__(33);
-const subdomain_management_1 = __webpack_require__(147);
-const exception_filter_1 = __webpack_require__(159);
+const subdomain_management_1 = __webpack_require__(155);
+const exception_filter_1 = __webpack_require__(167);
 const removeAuth = (res) => {
     res.cookie('auth', '', {
         domain: (0, subdomain_management_1.getCookieUrlFromDomain)(process.env.FRONTEND_URL),
@@ -19766,7 +20311,7 @@ exports.AuthMiddleware = AuthMiddleware = tslib_1.__decorate([
 
 
 /***/ }),
-/* 161 */
+/* 169 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19775,9 +20320,9 @@ exports.StripeController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const stripe_service_1 = __webpack_require__(106);
+const stripe_service_1 = __webpack_require__(107);
 const swagger_1 = __webpack_require__(3);
-const codes_service_1 = __webpack_require__(162);
+const codes_service_1 = __webpack_require__(170);
 let StripeController = class StripeController {
     constructor(_stripeService, _codesService) {
         this._stripeService = _stripeService;
@@ -19863,7 +20408,7 @@ exports.StripeController = StripeController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 162 */
+/* 170 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19892,7 +20437,7 @@ exports.CodesService = CodesService = tslib_1.__decorate([
 
 
 /***/ }),
-/* 163 */
+/* 171 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19901,10 +20446,10 @@ exports.AnalyticsController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const org_from_request_1 = __webpack_require__(153);
+const org_from_request_1 = __webpack_require__(161);
 const stars_service_1 = __webpack_require__(36);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
-const stars_list_dto_1 = __webpack_require__(164);
+const stars_list_dto_1 = __webpack_require__(172);
 const swagger_1 = __webpack_require__(3);
 const integration_service_1 = __webpack_require__(43);
 let AnalyticsController = class AnalyticsController {
@@ -19979,7 +20524,7 @@ exports.AnalyticsController = AnalyticsController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 164 */
+/* 172 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -19987,7 +20532,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.StarsListDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class StarsListDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { page: { required: true, type: () => Number }, key: { required: true, type: () => Object, enum: ['login', 'totalStars', 'stars', 'date', 'forks', 'totalForks'] }, state: { required: true, type: () => Object, enum: ['desc', 'asc'] } };
@@ -20012,7 +20557,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 165 */
+/* 173 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20021,9 +20566,9 @@ exports.PoliciesGuard = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
 const core_1 = __webpack_require__(6);
-const permissions_service_1 = __webpack_require__(155);
-const permissions_ability_1 = __webpack_require__(154);
-const subscription_exception_1 = __webpack_require__(166);
+const permissions_service_1 = __webpack_require__(163);
+const permissions_ability_1 = __webpack_require__(162);
+const subscription_exception_1 = __webpack_require__(174);
 let PoliciesGuard = class PoliciesGuard {
     constructor(_reflector, _authorizationService) {
         this._reflector = _reflector;
@@ -20065,7 +20610,7 @@ exports.PoliciesGuard = PoliciesGuard = tslib_1.__decorate([
 
 
 /***/ }),
-/* 166 */
+/* 174 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20073,7 +20618,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SubscriptionExceptionFilter = exports.SubscriptionException = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const permissions_service_1 = __webpack_require__(155);
+const permissions_service_1 = __webpack_require__(163);
 class SubscriptionException extends common_1.HttpException {
     constructor(message) {
         super(message, common_1.HttpStatus.PAYMENT_REQUIRED);
@@ -20120,7 +20665,7 @@ const getErrorMessage = (error) => {
 
 
 /***/ }),
-/* 167 */
+/* 175 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20130,22 +20675,22 @@ const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
 const redis_service_1 = __webpack_require__(29);
-const connect_integration_dto_1 = __webpack_require__(168);
+const connect_integration_dto_1 = __webpack_require__(176);
 const integration_manager_1 = __webpack_require__(55);
 const integration_service_1 = __webpack_require__(43);
-const org_from_request_1 = __webpack_require__(153);
-const api_key_dto_1 = __webpack_require__(169);
-const integration_function_dto_1 = __webpack_require__(170);
-const permissions_service_1 = __webpack_require__(155);
-const permissions_ability_1 = __webpack_require__(154);
+const org_from_request_1 = __webpack_require__(161);
+const api_key_dto_1 = __webpack_require__(177);
+const integration_function_dto_1 = __webpack_require__(178);
+const permissions_service_1 = __webpack_require__(163);
+const permissions_ability_1 = __webpack_require__(162);
 const pricing_1 = __webpack_require__(41);
 const swagger_1 = __webpack_require__(3);
-const user_from_request_1 = __webpack_require__(152);
-const integration_missing_scopes_1 = __webpack_require__(171);
-const posts_service_1 = __webpack_require__(99);
-const integration_time_dto_1 = __webpack_require__(172);
+const user_from_request_1 = __webpack_require__(160);
+const integration_missing_scopes_1 = __webpack_require__(179);
+const posts_service_1 = __webpack_require__(100);
+const integration_time_dto_1 = __webpack_require__(180);
 const auth_service_1 = __webpack_require__(12);
-const plug_dto_1 = __webpack_require__(174);
+const plug_dto_1 = __webpack_require__(182);
 const social_abstract_1 = __webpack_require__(62);
 const timer_1 = __webpack_require__(63);
 const telegram_provider_1 = __webpack_require__(93);
@@ -20683,7 +21228,7 @@ exports.IntegrationsController = IntegrationsController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 168 */
+/* 176 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20691,7 +21236,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ConnectIntegrationDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class ConnectIntegrationDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { state: { required: true, type: () => String }, code: { required: true, type: () => String }, timezone: { required: true, type: () => String }, refresh: { required: false, type: () => String } };
@@ -20721,7 +21266,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 169 */
+/* 177 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20729,7 +21274,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ApiKeyDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class ApiKeyDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { api: { required: true, type: () => String, minLength: 4 } };
@@ -20746,7 +21291,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 170 */
+/* 178 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20754,7 +21299,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.IntegrationFunctionDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class IntegrationFunctionDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { name: { required: true, type: () => String }, id: { required: true, type: () => String }, data: { required: true, type: () => Object } };
@@ -20774,7 +21319,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 171 */
+/* 179 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20798,7 +21343,7 @@ exports.NotEnoughScopesFilter = NotEnoughScopesFilter = tslib_1.__decorate([
 
 
 /***/ }),
-/* 172 */
+/* 180 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20806,8 +21351,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.IntegrationTimeDto = exports.IntegrationValidateTimeDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
 class IntegrationValidateTimeDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { time: { required: true, type: () => Number } };
@@ -20821,7 +21366,7 @@ tslib_1.__decorate([
 ], IntegrationValidateTimeDto.prototype, "time", void 0);
 class IntegrationTimeDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { time: { required: true, type: () => [(__webpack_require__(172).IntegrationValidateTimeDto)] } };
+        return { time: { required: true, type: () => [(__webpack_require__(180).IntegrationValidateTimeDto)] } };
     }
 }
 exports.IntegrationTimeDto = IntegrationTimeDto;
@@ -20835,13 +21380,13 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 173 */
+/* 181 */
 /***/ ((module) => {
 
 module.exports = require("class-transformer");
 
 /***/ }),
-/* 174 */
+/* 182 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20849,8 +21394,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PlugDto = exports.FieldsDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
 class FieldsDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { name: { required: true, type: () => String }, value: { required: true, type: () => String } };
@@ -20869,7 +21414,7 @@ tslib_1.__decorate([
 ], FieldsDto.prototype, "value", void 0);
 class PlugDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { func: { required: true, type: () => String }, fields: { required: true, type: () => [(__webpack_require__(174).FieldsDto)] } };
+        return { func: { required: true, type: () => String }, fields: { required: true, type: () => [(__webpack_require__(182).FieldsDto)] } };
     }
 }
 exports.PlugDto = PlugDto;
@@ -20887,7 +21432,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 175 */
+/* 183 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -20896,12 +21441,12 @@ exports.SettingsController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const org_from_request_1 = __webpack_require__(153);
+const org_from_request_1 = __webpack_require__(161);
 const stars_service_1 = __webpack_require__(36);
-const permissions_ability_1 = __webpack_require__(154);
-const permissions_service_1 = __webpack_require__(155);
+const permissions_ability_1 = __webpack_require__(162);
+const permissions_service_1 = __webpack_require__(163);
 const organization_service_1 = __webpack_require__(17);
-const add_team_member_dto_1 = __webpack_require__(176);
+const add_team_member_dto_1 = __webpack_require__(184);
 const swagger_1 = __webpack_require__(3);
 let SettingsController = class SettingsController {
     constructor(_starsService, _organizationService) {
@@ -21061,7 +21606,7 @@ exports.SettingsController = SettingsController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 176 */
+/* 184 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21069,7 +21614,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AddTeamMemberDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class AddTeamMemberDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { email: { required: true, type: () => String }, role: { required: true, type: () => String, enum: ['USER', 'ADMIN'] }, sendEmail: { required: true, type: () => Boolean } };
@@ -21095,7 +21640,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 177 */
+/* 185 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21104,21 +21649,21 @@ exports.PostsController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const posts_service_1 = __webpack_require__(99);
-const org_from_request_1 = __webpack_require__(153);
-const create_post_dto_1 = __webpack_require__(178);
-const get_posts_dto_1 = __webpack_require__(191);
+const posts_service_1 = __webpack_require__(100);
+const org_from_request_1 = __webpack_require__(161);
+const create_post_dto_1 = __webpack_require__(186);
+const get_posts_dto_1 = __webpack_require__(199);
 const stars_service_1 = __webpack_require__(36);
-const permissions_ability_1 = __webpack_require__(154);
-const permissions_service_1 = __webpack_require__(155);
+const permissions_ability_1 = __webpack_require__(162);
+const permissions_service_1 = __webpack_require__(163);
 const swagger_1 = __webpack_require__(3);
-const messages_service_1 = __webpack_require__(104);
-const generator_dto_1 = __webpack_require__(192);
-const create_generated_posts_dto_1 = __webpack_require__(193);
-const agent_graph_service_1 = __webpack_require__(194);
-const user_from_request_1 = __webpack_require__(152);
-const short_link_service_1 = __webpack_require__(117);
-const create_tag_dto_1 = __webpack_require__(201);
+const messages_service_1 = __webpack_require__(105);
+const generator_dto_1 = __webpack_require__(200);
+const create_generated_posts_dto_1 = __webpack_require__(201);
+const agent_graph_service_1 = __webpack_require__(202);
+const user_from_request_1 = __webpack_require__(160);
+const short_link_service_1 = __webpack_require__(118);
+const create_tag_dto_1 = __webpack_require__(206);
 let PostsController = class PostsController {
     constructor(_postsService, _starsService, _messagesService, _agentGraphService, _shortLinkService) {
         this._postsService = _postsService;
@@ -21356,7 +21901,7 @@ exports.PostsController = PostsController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 178 */
+/* 186 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21364,20 +21909,20 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CreatePostDto = exports.Post = exports.PostContent = exports.Integration = exports.EmptySettings = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
-const dev_to_settings_dto_1 = __webpack_require__(179);
-const media_dto_1 = __webpack_require__(158);
-const medium_settings_dto_1 = __webpack_require__(181);
-const hashnode_settings_dto_1 = __webpack_require__(182);
-const reddit_dto_1 = __webpack_require__(183);
-const youtube_settings_dto_1 = __webpack_require__(184);
-const pinterest_dto_1 = __webpack_require__(185);
-const dribbble_dto_1 = __webpack_require__(186);
-const tiktok_dto_1 = __webpack_require__(187);
-const discord_dto_1 = __webpack_require__(188);
-const slack_dto_1 = __webpack_require__(189);
-const lemmy_dto_1 = __webpack_require__(190);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
+const dev_to_settings_dto_1 = __webpack_require__(187);
+const media_dto_1 = __webpack_require__(166);
+const medium_settings_dto_1 = __webpack_require__(189);
+const hashnode_settings_dto_1 = __webpack_require__(190);
+const reddit_dto_1 = __webpack_require__(191);
+const youtube_settings_dto_1 = __webpack_require__(192);
+const pinterest_dto_1 = __webpack_require__(193);
+const dribbble_dto_1 = __webpack_require__(194);
+const tiktok_dto_1 = __webpack_require__(195);
+const discord_dto_1 = __webpack_require__(196);
+const slack_dto_1 = __webpack_require__(197);
+const lemmy_dto_1 = __webpack_require__(198);
 class EmptySettings {
     static _OPENAPI_METADATA_FACTORY() {
         return {};
@@ -21397,7 +21942,7 @@ tslib_1.__decorate([
 ], Integration.prototype, "id", void 0);
 class PostContent {
     static _OPENAPI_METADATA_FACTORY() {
-        return { content: { required: true, type: () => String, minLength: 6 }, id: { required: true, type: () => String }, image: { required: true, type: () => [(__webpack_require__(158).MediaDto)] } };
+        return { content: { required: true, type: () => String, minLength: 6 }, id: { required: true, type: () => String }, image: { required: true, type: () => [(__webpack_require__(166).MediaDto)] } };
     }
 }
 exports.PostContent = PostContent;
@@ -21421,7 +21966,7 @@ tslib_1.__decorate([
 ], PostContent.prototype, "image", void 0);
 class Post {
     static _OPENAPI_METADATA_FACTORY() {
-        return { integration: { required: true, type: () => (__webpack_require__(178).Integration) }, value: { required: true, type: () => [(__webpack_require__(178).PostContent)] }, group: { required: true, type: () => String }, settings: { required: true, type: () => Object } };
+        return { integration: { required: true, type: () => (__webpack_require__(186).Integration) }, value: { required: true, type: () => [(__webpack_require__(186).PostContent)] }, group: { required: true, type: () => String }, settings: { required: true, type: () => Object } };
     }
 }
 exports.Post = Post;
@@ -21484,7 +22029,7 @@ tslib_1.__decorate([
 ], Tags.prototype, "label", void 0);
 class CreatePostDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { type: { required: true, type: () => Object, enum: ['draft', 'schedule', 'now'] }, order: { required: true, type: () => String }, shortLink: { required: true, type: () => Boolean }, inter: { required: false, type: () => Number }, date: { required: true, type: () => String }, tags: { required: true, type: () => [Tags] }, posts: { required: true, type: () => [(__webpack_require__(178).Post)] } };
+        return { type: { required: true, type: () => Object, enum: ['draft', 'schedule', 'now'] }, order: { required: true, type: () => String }, shortLink: { required: true, type: () => Boolean }, inter: { required: false, type: () => Number }, date: { required: true, type: () => String }, tags: { required: true, type: () => [Tags] }, posts: { required: true, type: () => [(__webpack_require__(186).Post)] } };
     }
 }
 exports.CreatePostDto = CreatePostDto;
@@ -21531,7 +22076,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 179 */
+/* 187 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21539,12 +22084,12 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DevToSettingsDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const media_dto_1 = __webpack_require__(158);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const media_dto_1 = __webpack_require__(166);
+const class_transformer_1 = __webpack_require__(181);
 class DevToSettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { title: { required: true, type: () => String, minLength: 2 }, main_image: { required: false, type: () => (__webpack_require__(158).MediaDto) }, canonical: { required: false, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, organization: { required: false, type: () => String }, tags: { required: true, type: () => [(__webpack_require__(180).DevToTagsSettingsDto)] } };
+        return { title: { required: true, type: () => String, minLength: 2 }, main_image: { required: false, type: () => (__webpack_require__(166).MediaDto) }, canonical: { required: false, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, organization: { required: false, type: () => String }, tags: { required: true, type: () => [(__webpack_require__(188).DevToTagsSettingsDto)] } };
     }
 }
 exports.DevToSettingsDto = DevToSettingsDto;
@@ -21583,7 +22128,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 180 */
+/* 188 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21591,7 +22136,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DevToTagsSettingsDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class DevToTagsSettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { value: { required: true, type: () => Number }, label: { required: true, type: () => String } };
@@ -21609,7 +22154,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 181 */
+/* 189 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21617,7 +22162,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.MediumSettingsDto = exports.MediumTagsSettings = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class MediumTagsSettings {
     static _OPENAPI_METADATA_FACTORY() {
         return { value: { required: true, type: () => String }, label: { required: true, type: () => String } };
@@ -21634,7 +22179,7 @@ tslib_1.__decorate([
 ], MediumTagsSettings.prototype, "label", void 0);
 class MediumSettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { title: { required: true, type: () => String, minLength: 2 }, subtitle: { required: true, type: () => String, minLength: 2 }, canonical: { required: false, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, publication: { required: false, type: () => String }, tags: { required: true, type: () => [(__webpack_require__(181).MediumTagsSettings)] } };
+        return { title: { required: true, type: () => String, minLength: 2 }, subtitle: { required: true, type: () => String, minLength: 2 }, canonical: { required: false, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, publication: { required: false, type: () => String }, tags: { required: true, type: () => [(__webpack_require__(189).MediumTagsSettings)] } };
     }
 }
 exports.MediumSettingsDto = MediumSettingsDto;
@@ -21673,7 +22218,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 182 */
+/* 190 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21681,9 +22226,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.HashnodeSettingsDto = exports.HashnodeTagsSettings = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
-const media_dto_1 = __webpack_require__(158);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
+const media_dto_1 = __webpack_require__(166);
 class HashnodeTagsSettings {
     static _OPENAPI_METADATA_FACTORY() {
         return { value: { required: true, type: () => String }, label: { required: true, type: () => String } };
@@ -21700,7 +22245,7 @@ tslib_1.__decorate([
 ], HashnodeTagsSettings.prototype, "label", void 0);
 class HashnodeSettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { title: { required: true, type: () => String, minLength: 6 }, subtitle: { required: true, type: () => String, minLength: 2 }, main_image: { required: false, type: () => (__webpack_require__(158).MediaDto) }, canonical: { required: false, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, publication: { required: false, type: () => String }, tags: { required: true, type: () => [(__webpack_require__(182).HashnodeTagsSettings)] } };
+        return { title: { required: true, type: () => String, minLength: 6 }, subtitle: { required: true, type: () => String, minLength: 2 }, main_image: { required: false, type: () => (__webpack_require__(166).MediaDto) }, canonical: { required: false, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, publication: { required: false, type: () => String }, tags: { required: true, type: () => [(__webpack_require__(190).HashnodeTagsSettings)] } };
     }
 }
 exports.HashnodeSettingsDto = HashnodeSettingsDto;
@@ -21744,7 +22289,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 183 */
+/* 191 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21752,9 +22297,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.RedditSettingsDto = exports.RedditSettingsValueDto = exports.RedditSettingsDtoInner = exports.RedditFlairDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const media_dto_1 = __webpack_require__(158);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const media_dto_1 = __webpack_require__(166);
+const class_transformer_1 = __webpack_require__(181);
 class RedditFlairDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { id: { required: true, type: () => String }, name: { required: true, type: () => String } };
@@ -21773,7 +22318,7 @@ tslib_1.__decorate([
 ], RedditFlairDto.prototype, "name", void 0);
 class RedditSettingsDtoInner {
     static _OPENAPI_METADATA_FACTORY() {
-        return { subreddit: { required: true, type: () => String, minLength: 2 }, title: { required: true, type: () => String, minLength: 2 }, type: { required: true, type: () => String, minLength: 2 }, url: { required: true, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, is_flair_required: { required: true, type: () => Boolean }, flair: { required: true, type: () => (__webpack_require__(183).RedditFlairDto) }, media: { required: true, type: () => [(__webpack_require__(158).MediaDto)] } };
+        return { subreddit: { required: true, type: () => String, minLength: 2 }, title: { required: true, type: () => String, minLength: 2 }, type: { required: true, type: () => String, minLength: 2 }, url: { required: true, type: () => String, pattern: "/^(|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|www\\.[a-zA-Z0-9][a-zA-Z0-9-]+[a-zA-Z0-9]\\.[^\\s]{2,}|https?:\\/\\/(?:www\\.|(?!www))[a-zA-Z0-9]+\\.[^\\s]{2,}|www\\.[a-zA-Z0-9]+\\.[^\\s]{2,})$/" }, is_flair_required: { required: true, type: () => Boolean }, flair: { required: true, type: () => (__webpack_require__(191).RedditFlairDto) }, media: { required: true, type: () => [(__webpack_require__(166).MediaDto)] } };
     }
 }
 exports.RedditSettingsDtoInner = RedditSettingsDtoInner;
@@ -21824,7 +22369,7 @@ tslib_1.__decorate([
 ], RedditSettingsDtoInner.prototype, "media", void 0);
 class RedditSettingsValueDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { value: { required: true, type: () => (__webpack_require__(183).RedditSettingsDtoInner) } };
+        return { value: { required: true, type: () => (__webpack_require__(191).RedditSettingsDtoInner) } };
     }
 }
 exports.RedditSettingsValueDto = RedditSettingsValueDto;
@@ -21836,7 +22381,7 @@ tslib_1.__decorate([
 ], RedditSettingsValueDto.prototype, "value", void 0);
 class RedditSettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { subreddit: { required: true, type: () => [(__webpack_require__(183).RedditSettingsValueDto)] } };
+        return { subreddit: { required: true, type: () => [(__webpack_require__(191).RedditSettingsValueDto)] } };
     }
 }
 exports.RedditSettingsDto = RedditSettingsDto;
@@ -21849,7 +22394,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 184 */
+/* 192 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21857,9 +22402,9 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.YoutubeSettingsDto = exports.YoutubeTagsSettings = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const media_dto_1 = __webpack_require__(158);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const media_dto_1 = __webpack_require__(166);
+const class_transformer_1 = __webpack_require__(181);
 class YoutubeTagsSettings {
     static _OPENAPI_METADATA_FACTORY() {
         return { value: { required: true, type: () => String }, label: { required: true, type: () => String } };
@@ -21876,7 +22421,7 @@ tslib_1.__decorate([
 ], YoutubeTagsSettings.prototype, "label", void 0);
 class YoutubeSettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { title: { required: true, type: () => String, minLength: 2 }, type: { required: true, type: () => String, enum: ['public', 'private', 'unlisted'] }, thumbnail: { required: false, type: () => (__webpack_require__(158).MediaDto) }, tags: { required: true, type: () => [(__webpack_require__(184).YoutubeTagsSettings)] } };
+        return { title: { required: true, type: () => String, minLength: 2 }, type: { required: true, type: () => String, enum: ['public', 'private', 'unlisted'] }, thumbnail: { required: false, type: () => (__webpack_require__(166).MediaDto) }, tags: { required: true, type: () => [(__webpack_require__(192).YoutubeTagsSettings)] } };
     }
 }
 exports.YoutubeSettingsDto = YoutubeSettingsDto;
@@ -21905,7 +22450,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 185 */
+/* 193 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21913,7 +22458,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PinterestSettingsDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class PinterestSettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { title: { required: true, type: () => String }, link: { required: true, type: () => String }, dominant_color: { required: true, type: () => String }, board: { required: true, type: () => String, minLength: 1 } };
@@ -21951,7 +22496,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 186 */
+/* 194 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21959,7 +22504,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DribbbleDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class DribbbleDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { title: { required: true, type: () => String, minLength: 1 }, team: { required: true, type: () => String } };
@@ -21983,7 +22528,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 187 */
+/* 195 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -21991,7 +22536,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.TikTokDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class TikTokDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { privacy_level: { required: true, type: () => Object, enum: [
@@ -21999,7 +22544,7 @@ class TikTokDto {
                     'MUTUAL_FOLLOW_FRIENDS',
                     'FOLLOWER_OF_CREATOR',
                     'SELF_ONLY',
-                ] }, duet: { required: true, type: () => Boolean }, stitch: { required: true, type: () => Boolean }, comment: { required: true, type: () => Boolean }, brand_content_toggle: { required: true, type: () => Boolean }, brand_organic_toggle: { required: true, type: () => Boolean }, isValidVideo: { required: true, type: () => Boolean, enum: ['true'] }, content_posting_method: { required: true, type: () => Object, enum: ['DIRECT_POST', 'UPLOAD'] } };
+                ] }, duet: { required: true, type: () => Boolean }, stitch: { required: true, type: () => Boolean }, comment: { required: true, type: () => Boolean }, autoAddMusic: { required: true, type: () => Object, enum: ['yes', 'no'] }, brand_content_toggle: { required: true, type: () => Boolean }, brand_organic_toggle: { required: true, type: () => Boolean }, content_posting_method: { required: true, type: () => Object, enum: ['DIRECT_POST', 'UPLOAD'] } };
     }
 }
 exports.TikTokDto = TikTokDto;
@@ -22026,6 +22571,10 @@ tslib_1.__decorate([
     tslib_1.__metadata("design:type", Boolean)
 ], TikTokDto.prototype, "comment", void 0);
 tslib_1.__decorate([
+    (0, class_validator_1.IsIn)(['yes', 'no']),
+    tslib_1.__metadata("design:type", String)
+], TikTokDto.prototype, "autoAddMusic", void 0);
+tslib_1.__decorate([
     (0, class_validator_1.IsBoolean)(),
     tslib_1.__metadata("design:type", Boolean)
 ], TikTokDto.prototype, "brand_content_toggle", void 0);
@@ -22034,11 +22583,6 @@ tslib_1.__decorate([
     tslib_1.__metadata("design:type", Boolean)
 ], TikTokDto.prototype, "brand_organic_toggle", void 0);
 tslib_1.__decorate([
-    (0, class_validator_1.IsIn)(['true']),
-    (0, class_validator_1.IsDefined)(),
-    tslib_1.__metadata("design:type", Boolean)
-], TikTokDto.prototype, "isValidVideo", void 0);
-tslib_1.__decorate([
     (0, class_validator_1.IsIn)(['DIRECT_POST', 'UPLOAD']),
     (0, class_validator_1.IsString)(),
     tslib_1.__metadata("design:type", String)
@@ -22046,7 +22590,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 188 */
+/* 196 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22054,7 +22598,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.DiscordDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class DiscordDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { channel: { required: true, type: () => String, minLength: 1 } };
@@ -22070,7 +22614,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 189 */
+/* 197 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22078,7 +22622,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SlackDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class SlackDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { channel: { required: true, type: () => String, minLength: 1 } };
@@ -22094,7 +22638,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 190 */
+/* 198 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22102,8 +22646,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.LemmySettingsDto = exports.LemmySettingsValueDto = exports.LemmySettingsDtoInner = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
 class LemmySettingsDtoInner {
     static _OPENAPI_METADATA_FACTORY() {
         return { subreddit: { required: true, type: () => String, minLength: 2 }, id: { required: true, type: () => String }, title: { required: true, type: () => String, minLength: 2 }, url: { required: true, type: () => String } };
@@ -22135,7 +22679,7 @@ tslib_1.__decorate([
 ], LemmySettingsDtoInner.prototype, "url", void 0);
 class LemmySettingsValueDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { value: { required: true, type: () => (__webpack_require__(190).LemmySettingsDtoInner) } };
+        return { value: { required: true, type: () => (__webpack_require__(198).LemmySettingsDtoInner) } };
     }
 }
 exports.LemmySettingsValueDto = LemmySettingsValueDto;
@@ -22147,7 +22691,7 @@ tslib_1.__decorate([
 ], LemmySettingsValueDto.prototype, "value", void 0);
 class LemmySettingsDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { subreddit: { required: true, type: () => [(__webpack_require__(190).LemmySettingsValueDto)] } };
+        return { subreddit: { required: true, type: () => [(__webpack_require__(198).LemmySettingsValueDto)] } };
     }
 }
 exports.LemmySettingsDto = LemmySettingsDto;
@@ -22160,7 +22704,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 191 */
+/* 199 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22168,8 +22712,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GetPostsDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_transformer_1 = __webpack_require__(173);
-const class_validator_1 = __webpack_require__(134);
+const class_transformer_1 = __webpack_require__(181);
+const class_validator_1 = __webpack_require__(142);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
 class GetPostsDto {
     static _OPENAPI_METADATA_FACTORY() {
@@ -22218,7 +22762,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 192 */
+/* 200 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22226,7 +22770,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.GeneratorDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class GeneratorDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { research: { required: true, type: () => String, minLength: 10 }, isPicture: { required: true, type: () => Boolean }, format: { required: true, type: () => Object, enum: ['one_short', 'one_long', 'thread_short', 'thread_long'] }, tone: { required: true, type: () => Object, enum: ['personal', 'company'] } };
@@ -22255,7 +22799,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 193 */
+/* 201 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22263,8 +22807,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CreateGeneratedPostsDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
 class InnerPost {
     static _OPENAPI_METADATA_FACTORY() {
         return { post: { required: true, type: () => String } };
@@ -22327,7 +22871,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 194 */
+/* 202 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22336,16 +22880,16 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AgentGraphService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const messages_1 = __webpack_require__(195);
-const langgraph_1 = __webpack_require__(196);
-const openai_1 = __webpack_require__(197);
-const tavily_search_1 = __webpack_require__(198);
-const prebuilt_1 = __webpack_require__(199);
-const prompts_1 = __webpack_require__(200);
+const messages_1 = __webpack_require__(203);
+const langgraph_1 = __webpack_require__(134);
+const openai_1 = __webpack_require__(136);
+const tavily_search_1 = __webpack_require__(204);
+const prebuilt_1 = __webpack_require__(205);
+const prompts_1 = __webpack_require__(137);
 const dayjs_1 = tslib_1.__importDefault(__webpack_require__(32));
-const posts_service_1 = __webpack_require__(99);
-const zod_1 = __webpack_require__(116);
-const media_service_1 = __webpack_require__(111);
+const posts_service_1 = __webpack_require__(100);
+const zod_1 = __webpack_require__(117);
+const media_service_1 = __webpack_require__(112);
 const upload_factory_1 = __webpack_require__(45);
 const tools = !process.env.TAVILY_API_KEY ? [] : [new tavily_search_1.TavilySearchResults({ maxResults: 3 })];
 const toolNode = new prebuilt_1.ToolNode(tools);
@@ -22651,43 +23195,25 @@ exports.AgentGraphService = AgentGraphService = AgentGraphService_1 = tslib_1.__
 
 
 /***/ }),
-/* 195 */
+/* 203 */
 /***/ ((module) => {
 
 module.exports = require("@langchain/core/messages");
 
 /***/ }),
-/* 196 */
-/***/ ((module) => {
-
-module.exports = require("@langchain/langgraph");
-
-/***/ }),
-/* 197 */
-/***/ ((module) => {
-
-module.exports = require("@langchain/openai");
-
-/***/ }),
-/* 198 */
+/* 204 */
 /***/ ((module) => {
 
 module.exports = require("@langchain/community/tools/tavily_search");
 
 /***/ }),
-/* 199 */
+/* 205 */
 /***/ ((module) => {
 
 module.exports = require("@langchain/langgraph/prebuilt");
 
 /***/ }),
-/* 200 */
-/***/ ((module) => {
-
-module.exports = require("@langchain/core/prompts");
-
-/***/ }),
-/* 201 */
+/* 206 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22695,7 +23221,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CreateTagDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class CreateTagDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { name: { required: true, type: () => String }, color: { required: true, type: () => String } };
@@ -22713,7 +23239,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 202 */
+/* 207 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22722,12 +23248,12 @@ exports.MediaController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const org_from_request_1 = __webpack_require__(153);
-const media_service_1 = __webpack_require__(111);
+const org_from_request_1 = __webpack_require__(161);
+const media_service_1 = __webpack_require__(112);
 const swagger_1 = __webpack_require__(3);
-const r2_uploader_1 = tslib_1.__importDefault(__webpack_require__(203));
-const platform_express_1 = __webpack_require__(205);
-const custom_upload_validation_1 = __webpack_require__(206);
+const r2_uploader_1 = tslib_1.__importDefault(__webpack_require__(208));
+const platform_express_1 = __webpack_require__(210);
+const custom_upload_validation_1 = __webpack_require__(211);
 const subscription_service_1 = __webpack_require__(40);
 const upload_factory_1 = __webpack_require__(45);
 let MediaController = class MediaController {
@@ -22861,7 +23387,7 @@ exports.MediaController = MediaController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 203 */
+/* 208 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -22876,7 +23402,7 @@ exports.abortMultipartUpload = abortMultipartUpload;
 exports.signPart = signPart;
 const tslib_1 = __webpack_require__(1);
 const client_s3_1 = __webpack_require__(47);
-const s3_request_presigner_1 = __webpack_require__(204);
+const s3_request_presigner_1 = __webpack_require__(209);
 const path_1 = tslib_1.__importDefault(__webpack_require__(54));
 const make_is_1 = __webpack_require__(16);
 const { CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_ACCESS_KEY, CLOUDFLARE_SECRET_ACCESS_KEY, CLOUDFLARE_BUCKETNAME, CLOUDFLARE_BUCKET_URL } = process.env;
@@ -23050,19 +23576,19 @@ async function signPart(req, res) {
 
 
 /***/ }),
-/* 204 */
+/* 209 */
 /***/ ((module) => {
 
 module.exports = require("@aws-sdk/s3-request-presigner");
 
 /***/ }),
-/* 205 */
+/* 210 */
 /***/ ((module) => {
 
 module.exports = require("@nestjs/platform-express");
 
 /***/ }),
-/* 206 */
+/* 211 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23107,7 +23633,7 @@ exports.CustomFileValidationPipe = CustomFileValidationPipe = tslib_1.__decorate
 
 
 /***/ }),
-/* 207 */
+/* 212 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23116,7 +23642,7 @@ exports.UploadModule = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
 const upload_factory_1 = __webpack_require__(45);
-const custom_upload_validation_1 = __webpack_require__(206);
+const custom_upload_validation_1 = __webpack_require__(211);
 let UploadModule = class UploadModule {
 };
 exports.UploadModule = UploadModule;
@@ -23130,7 +23656,7 @@ exports.UploadModule = UploadModule = tslib_1.__decorate([
 
 
 /***/ }),
-/* 208 */
+/* 213 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23140,13 +23666,13 @@ const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
 const subscription_service_1 = __webpack_require__(40);
-const stripe_service_1 = __webpack_require__(106);
-const org_from_request_1 = __webpack_require__(153);
-const billing_subscribe_dto_1 = __webpack_require__(209);
+const stripe_service_1 = __webpack_require__(107);
+const org_from_request_1 = __webpack_require__(161);
+const billing_subscribe_dto_1 = __webpack_require__(214);
 const swagger_1 = __webpack_require__(3);
-const user_from_request_1 = __webpack_require__(152);
+const user_from_request_1 = __webpack_require__(160);
 const notification_service_1 = __webpack_require__(18);
-const nowpayments_1 = __webpack_require__(210);
+const nowpayments_1 = __webpack_require__(215);
 let BillingController = class BillingController {
     constructor(_subscriptionService, _stripeService, _notificationService, _nowpayments) {
         this._subscriptionService = _subscriptionService;
@@ -23287,7 +23813,7 @@ exports.BillingController = BillingController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 209 */
+/* 214 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23295,7 +23821,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.BillingSubscribeDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class BillingSubscribeDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { period: { required: true, type: () => Object, enum: ['MONTHLY', 'YEARLY'] }, billing: { required: true, type: () => Object, enum: ['STANDARD', 'PRO', 'TEAM', 'ULTIMATE'] }, utm: { required: true, type: () => String }, tolt: { required: true, type: () => String } };
@@ -23313,7 +23839,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 210 */
+/* 215 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23377,7 +23903,7 @@ exports.Nowpayments = Nowpayments = tslib_1.__decorate([
 
 
 /***/ }),
-/* 211 */
+/* 216 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23386,8 +23912,8 @@ exports.NotificationsController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const user_from_request_1 = __webpack_require__(152);
-const org_from_request_1 = __webpack_require__(153);
+const user_from_request_1 = __webpack_require__(160);
+const org_from_request_1 = __webpack_require__(161);
 const notification_service_1 = __webpack_require__(18);
 const swagger_1 = __webpack_require__(3);
 let NotificationsController = class NotificationsController {
@@ -23428,7 +23954,7 @@ exports.NotificationsController = NotificationsController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 212 */
+/* 217 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23438,19 +23964,19 @@ const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
 const swagger_1 = __webpack_require__(3);
-const user_from_request_1 = __webpack_require__(152);
-const item_user_service_1 = __webpack_require__(124);
-const add_remove_item_dto_1 = __webpack_require__(213);
-const stripe_service_1 = __webpack_require__(106);
+const user_from_request_1 = __webpack_require__(160);
+const item_user_service_1 = __webpack_require__(126);
+const add_remove_item_dto_1 = __webpack_require__(218);
+const stripe_service_1 = __webpack_require__(107);
 const users_service_1 = __webpack_require__(33);
-const change_active_dto_1 = __webpack_require__(214);
-const items_dto_1 = __webpack_require__(215);
-const org_from_request_1 = __webpack_require__(153);
-const audience_dto_1 = __webpack_require__(216);
-const new_conversation_dto_1 = __webpack_require__(217);
-const messages_service_1 = __webpack_require__(104);
-const create_offer_dto_1 = __webpack_require__(218);
-const posts_service_1 = __webpack_require__(99);
+const change_active_dto_1 = __webpack_require__(219);
+const items_dto_1 = __webpack_require__(220);
+const org_from_request_1 = __webpack_require__(161);
+const audience_dto_1 = __webpack_require__(221);
+const new_conversation_dto_1 = __webpack_require__(222);
+const messages_service_1 = __webpack_require__(105);
+const create_offer_dto_1 = __webpack_require__(223);
+const posts_service_1 = __webpack_require__(100);
 let MarketplaceController = class MarketplaceController {
     constructor(_itemUserService, _stripeService, _userService, _messagesService, _postsService) {
         this._itemUserService = _itemUserService;
@@ -23502,7 +24028,10 @@ let MarketplaceController = class MarketplaceController {
         if (!getPost) {
             return;
         }
-        return { ...await this._postsService.getPost(getPost.organizationId, id), providerId: getPost.integration.providerIdentifier };
+        return {
+            ...(await this._postsService.getPost(getPost.organizationId, id)),
+            providerId: getPost.integration.providerIdentifier,
+        };
     }
     async revision(user, organization, id, message) {
         return this._messagesService.requestRevision(user.id, organization.id, id, message);
@@ -23700,7 +24229,7 @@ exports.MarketplaceController = MarketplaceController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 213 */
+/* 218 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23708,7 +24237,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AddRemoveItemDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 const tags_list_1 = __webpack_require__(35);
 class AddRemoveItemDto {
     static _OPENAPI_METADATA_FACTORY() {
@@ -23728,7 +24257,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 214 */
+/* 219 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23736,7 +24265,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ChangeActiveDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class ChangeActiveDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { active: { required: true, type: () => Boolean } };
@@ -23750,7 +24279,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 215 */
+/* 220 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23758,7 +24287,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ItemsDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 const tags_list_1 = __webpack_require__(35);
 class ItemsDto {
     static _OPENAPI_METADATA_FACTORY() {
@@ -23779,7 +24308,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 216 */
+/* 221 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23787,7 +24316,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AudienceDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class AudienceDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { audience: { required: true, type: () => Number, minimum: 1, maximum: 99999999 } };
@@ -23803,7 +24332,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 217 */
+/* 222 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23811,7 +24340,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.NewConversationDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class NewConversationDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { to: { required: true, type: () => String }, message: { required: true, type: () => String, minLength: 50 } };
@@ -23830,7 +24359,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 218 */
+/* 223 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23838,8 +24367,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CreateOfferDto = exports.SocialMedia = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
 class SocialMedia {
     static _OPENAPI_METADATA_FACTORY() {
         return { total: { required: true, type: () => Number }, value: { required: true, type: () => String }, price: { required: true, type: () => Number } };
@@ -23860,7 +24389,7 @@ tslib_1.__decorate([
 ], SocialMedia.prototype, "price", void 0);
 class CreateOfferDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { group: { required: true, type: () => String }, socialMedia: { required: true, type: () => [(__webpack_require__(218).SocialMedia)] } };
+        return { group: { required: true, type: () => String }, socialMedia: { required: true, type: () => [(__webpack_require__(223).SocialMedia)] } };
     }
 }
 exports.CreateOfferDto = CreateOfferDto;
@@ -23877,7 +24406,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 219 */
+/* 224 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23887,10 +24416,10 @@ const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
 const swagger_1 = __webpack_require__(3);
-const messages_service_1 = __webpack_require__(104);
-const user_from_request_1 = __webpack_require__(152);
-const add_message_1 = __webpack_require__(220);
-const org_from_request_1 = __webpack_require__(153);
+const messages_service_1 = __webpack_require__(105);
+const user_from_request_1 = __webpack_require__(160);
+const add_message_1 = __webpack_require__(225);
+const org_from_request_1 = __webpack_require__(161);
 let MessagesController = class MessagesController {
     constructor(_messagesService) {
         this._messagesService = _messagesService;
@@ -23945,14 +24474,14 @@ exports.MessagesController = MessagesController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 220 */
+/* 225 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AddMessageDto = void 0;
 const tslib_1 = __webpack_require__(1);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class AddMessageDto {
 }
 exports.AddMessageDto = AddMessageDto;
@@ -23964,7 +24493,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 221 */
+/* 226 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -23973,8 +24502,8 @@ exports.CopilotController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const runtime_1 = __webpack_require__(222);
-const org_from_request_1 = __webpack_require__(153);
+const runtime_1 = __webpack_require__(227);
+const org_from_request_1 = __webpack_require__(161);
 const subscription_service_1 = __webpack_require__(40);
 let CopilotController = class CopilotController {
     constructor(_subscriptionService) {
@@ -24028,13 +24557,13 @@ exports.CopilotController = CopilotController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 222 */
+/* 227 */
 /***/ ((module) => {
 
 module.exports = require("@copilotkit/runtime");
 
 /***/ }),
-/* 223 */
+/* 228 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24044,9 +24573,9 @@ const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
 const swagger_1 = __webpack_require__(3);
-const agencies_service_1 = __webpack_require__(127);
-const user_from_request_1 = __webpack_require__(152);
-const create_agency_dto_1 = __webpack_require__(224);
+const agencies_service_1 = __webpack_require__(129);
+const user_from_request_1 = __webpack_require__(160);
+const create_agency_dto_1 = __webpack_require__(229);
 let AgenciesController = class AgenciesController {
     constructor(_agenciesService) {
         this._agenciesService = _agenciesService;
@@ -24100,7 +24629,7 @@ exports.AgenciesController = AgenciesController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 224 */
+/* 229 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24108,8 +24637,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.CreateAgencyDto = exports.CreateAgencyLogoDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
 class CreateAgencyLogoDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { id: { required: true, type: () => String }, path: { required: true, type: () => String } };
@@ -24123,7 +24652,7 @@ tslib_1.__decorate([
 ], CreateAgencyLogoDto.prototype, "id", void 0);
 class CreateAgencyDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { name: { required: true, type: () => String, minLength: 3 }, website: { required: true, type: () => String }, facebook: { required: true, type: () => String }, instagram: { required: true, type: () => String }, twitter: { required: true, type: () => String }, linkedIn: { required: true, type: () => String }, youtube: { required: true, type: () => String }, tiktok: { required: true, type: () => String }, logo: { required: true, type: () => (__webpack_require__(224).CreateAgencyLogoDto) }, shortDescription: { required: true, type: () => String }, description: { required: true, type: () => String }, niches: { required: true, type: () => [String], enum: [
+        return { name: { required: true, type: () => String, minLength: 3 }, website: { required: true, type: () => String }, facebook: { required: true, type: () => String }, instagram: { required: true, type: () => String }, twitter: { required: true, type: () => String }, linkedIn: { required: true, type: () => String }, youtube: { required: true, type: () => String }, tiktok: { required: true, type: () => String }, logo: { required: true, type: () => (__webpack_require__(229).CreateAgencyLogoDto) }, shortDescription: { required: true, type: () => String }, description: { required: true, type: () => String }, niches: { required: true, type: () => [String], enum: [
                     'Real Estate',
                     'Fashion',
                     'Health and Fitness',
@@ -24235,7 +24764,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 225 */
+/* 230 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24245,15 +24774,15 @@ const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
 const swagger_1 = __webpack_require__(3);
-const agencies_service_1 = __webpack_require__(127);
-const posts_service_1 = __webpack_require__(99);
-const track_service_1 = __webpack_require__(108);
-const nestjs_real_ip_1 = __webpack_require__(149);
-const user_agent_1 = __webpack_require__(150);
+const agencies_service_1 = __webpack_require__(129);
+const posts_service_1 = __webpack_require__(100);
+const track_service_1 = __webpack_require__(109);
+const nestjs_real_ip_1 = __webpack_require__(157);
+const user_agent_1 = __webpack_require__(158);
 const make_is_1 = __webpack_require__(16);
-const subdomain_management_1 = __webpack_require__(147);
-const agent_graph_insert_service_1 = __webpack_require__(226);
-const nowpayments_1 = __webpack_require__(210);
+const subdomain_management_1 = __webpack_require__(155);
+const agent_graph_insert_service_1 = __webpack_require__(231);
+const nowpayments_1 = __webpack_require__(215);
 let PublicController = class PublicController {
     constructor(_agenciesService, _trackService, _agentGraphInsertService, _postsService, _nowpayments) {
         this._agenciesService = _agenciesService;
@@ -24427,7 +24956,7 @@ exports.PublicController = PublicController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 226 */
+/* 231 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24436,14 +24965,14 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AgentGraphInsertService = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const messages_1 = __webpack_require__(195);
-const langgraph_1 = __webpack_require__(196);
-const openai_1 = __webpack_require__(197);
-const prompts_1 = __webpack_require__(200);
-const agent_categories_1 = __webpack_require__(227);
-const zod_1 = __webpack_require__(116);
-const agent_topics_1 = __webpack_require__(228);
-const posts_service_1 = __webpack_require__(99);
+const messages_1 = __webpack_require__(203);
+const langgraph_1 = __webpack_require__(134);
+const openai_1 = __webpack_require__(136);
+const prompts_1 = __webpack_require__(137);
+const agent_categories_1 = __webpack_require__(232);
+const zod_1 = __webpack_require__(117);
+const agent_topics_1 = __webpack_require__(233);
+const posts_service_1 = __webpack_require__(100);
 const model = new openai_1.ChatOpenAI({
     apiKey: process.env.OPENAI_API_KEY || 'sk-proj-',
     model: 'gpt-4o-2024-08-06',
@@ -24551,7 +25080,7 @@ exports.AgentGraphInsertService = AgentGraphInsertService = AgentGraphInsertServ
 
 
 /***/ }),
-/* 227 */
+/* 232 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -24592,7 +25121,7 @@ exports.agentCategories = [
 
 
 /***/ }),
-/* 228 */
+/* 233 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -24683,7 +25212,7 @@ exports.agentTopics = [
 
 
 /***/ }),
-/* 229 */
+/* 234 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24711,7 +25240,7 @@ exports.RootController = RootController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 230 */
+/* 235 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24720,12 +25249,12 @@ exports.WebhookController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const org_from_request_1 = __webpack_require__(153);
+const org_from_request_1 = __webpack_require__(161);
 const swagger_1 = __webpack_require__(3);
-const webhooks_service_1 = __webpack_require__(121);
-const permissions_ability_1 = __webpack_require__(154);
-const permissions_service_1 = __webpack_require__(155);
-const webhooks_dto_1 = __webpack_require__(231);
+const webhooks_service_1 = __webpack_require__(122);
+const permissions_ability_1 = __webpack_require__(162);
+const permissions_service_1 = __webpack_require__(163);
+const webhooks_dto_1 = __webpack_require__(236);
 let WebhookController = class WebhookController {
     constructor(_webhooksService) {
         this._webhooksService = _webhooksService;
@@ -24810,7 +25339,7 @@ exports.WebhookController = WebhookController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 231 */
+/* 236 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24818,8 +25347,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.UpdateDto = exports.WebhooksDto = exports.WebhooksIntegrationDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
-const class_transformer_1 = __webpack_require__(173);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
 class WebhooksIntegrationDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { id: { required: true, type: () => String } };
@@ -24833,7 +25362,7 @@ tslib_1.__decorate([
 ], WebhooksIntegrationDto.prototype, "id", void 0);
 class WebhooksDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { id: { required: true, type: () => String }, name: { required: true, type: () => String }, url: { required: true, type: () => String }, integrations: { required: true, type: () => [(__webpack_require__(231).WebhooksIntegrationDto)] } };
+        return { id: { required: true, type: () => String }, name: { required: true, type: () => String }, url: { required: true, type: () => String }, integrations: { required: true, type: () => [(__webpack_require__(236).WebhooksIntegrationDto)] } };
     }
 }
 exports.WebhooksDto = WebhooksDto;
@@ -24855,7 +25384,7 @@ tslib_1.__decorate([
 ], WebhooksDto.prototype, "integrations", void 0);
 class UpdateDto {
     static _OPENAPI_METADATA_FACTORY() {
-        return { id: { required: true, type: () => String }, name: { required: true, type: () => String }, url: { required: true, type: () => String }, integrations: { required: true, type: () => [(__webpack_require__(231).WebhooksIntegrationDto)] } };
+        return { id: { required: true, type: () => String }, name: { required: true, type: () => String }, url: { required: true, type: () => String }, integrations: { required: true, type: () => [(__webpack_require__(236).WebhooksIntegrationDto)] } };
     }
 }
 exports.UpdateDto = UpdateDto;
@@ -24883,7 +25412,7 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 232 */
+/* 237 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24892,10 +25421,10 @@ exports.SignatureController = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
-const org_from_request_1 = __webpack_require__(153);
+const org_from_request_1 = __webpack_require__(161);
 const swagger_1 = __webpack_require__(3);
-const signature_service_1 = __webpack_require__(130);
-const signature_dto_1 = __webpack_require__(233);
+const signature_service_1 = __webpack_require__(132);
+const signature_dto_1 = __webpack_require__(238);
 let SignatureController = class SignatureController {
     constructor(_signatureService) {
         this._signatureService = _signatureService;
@@ -24957,7 +25486,7 @@ exports.SignatureController = SignatureController = tslib_1.__decorate([
 
 
 /***/ }),
-/* 233 */
+/* 238 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -24965,7 +25494,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.SignatureDto = void 0;
 const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
-const class_validator_1 = __webpack_require__(134);
+const class_validator_1 = __webpack_require__(142);
 class SignatureDto {
     static _OPENAPI_METADATA_FACTORY() {
         return { content: { required: true, type: () => String }, autoAdd: { required: true, type: () => Boolean } };
@@ -24985,7 +25514,190 @@ tslib_1.__decorate([
 
 
 /***/ }),
-/* 234 */
+/* 239 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AutopostController = void 0;
+const tslib_1 = __webpack_require__(1);
+const openapi = __webpack_require__(3);
+const common_1 = __webpack_require__(5);
+const org_from_request_1 = __webpack_require__(161);
+const swagger_1 = __webpack_require__(3);
+const permissions_ability_1 = __webpack_require__(162);
+const permissions_service_1 = __webpack_require__(163);
+const autopost_service_1 = __webpack_require__(133);
+const autopost_dto_1 = __webpack_require__(240);
+let AutopostController = class AutopostController {
+    constructor(_autopostsService) {
+        this._autopostsService = _autopostsService;
+    }
+    async getAutoposts(org) {
+        return this._autopostsService.getAutoposts(org.id);
+    }
+    async createAutopost(org, body) {
+        return this._autopostsService.createAutopost(org.id, body);
+    }
+    async updateAutopost(org, body, id) {
+        return this._autopostsService.createAutopost(org.id, body, id);
+    }
+    async deleteAutopost(org, id) {
+        return this._autopostsService.deleteAutopost(org.id, id);
+    }
+    async changeActive(org, id, active) {
+        return this._autopostsService.changeActive(org.id, id, active);
+    }
+    async sendWebhook(url) {
+        return this._autopostsService.loadXML(url);
+    }
+};
+exports.AutopostController = AutopostController;
+tslib_1.__decorate([
+    (0, common_1.Get)('/'),
+    openapi.ApiResponse({ status: 200 }),
+    tslib_1.__param(0, (0, org_from_request_1.GetOrgFromRequest)()),
+    tslib_1.__metadata("design:type", Function),
+    tslib_1.__metadata("design:paramtypes", [Object]),
+    tslib_1.__metadata("design:returntype", Promise)
+], AutopostController.prototype, "getAutoposts", null);
+tslib_1.__decorate([
+    (0, common_1.Post)('/'),
+    (0, permissions_ability_1.CheckPolicies)([permissions_service_1.AuthorizationActions.Create, permissions_service_1.Sections.WEBHOOKS]),
+    openapi.ApiResponse({ status: 201 }),
+    tslib_1.__param(0, (0, org_from_request_1.GetOrgFromRequest)()),
+    tslib_1.__param(1, (0, common_1.Body)()),
+    tslib_1.__metadata("design:type", Function),
+    tslib_1.__metadata("design:paramtypes", [Object, autopost_dto_1.AutopostDto]),
+    tslib_1.__metadata("design:returntype", Promise)
+], AutopostController.prototype, "createAutopost", null);
+tslib_1.__decorate([
+    (0, common_1.Put)('/:id'),
+    openapi.ApiResponse({ status: 200 }),
+    tslib_1.__param(0, (0, org_from_request_1.GetOrgFromRequest)()),
+    tslib_1.__param(1, (0, common_1.Body)()),
+    tslib_1.__param(2, (0, common_1.Param)('id')),
+    tslib_1.__metadata("design:type", Function),
+    tslib_1.__metadata("design:paramtypes", [Object, autopost_dto_1.AutopostDto, String]),
+    tslib_1.__metadata("design:returntype", Promise)
+], AutopostController.prototype, "updateAutopost", null);
+tslib_1.__decorate([
+    (0, common_1.Delete)('/:id'),
+    openapi.ApiResponse({ status: 200 }),
+    tslib_1.__param(0, (0, org_from_request_1.GetOrgFromRequest)()),
+    tslib_1.__param(1, (0, common_1.Param)('id')),
+    tslib_1.__metadata("design:type", Function),
+    tslib_1.__metadata("design:paramtypes", [Object, String]),
+    tslib_1.__metadata("design:returntype", Promise)
+], AutopostController.prototype, "deleteAutopost", null);
+tslib_1.__decorate([
+    (0, common_1.Post)('/:id/active'),
+    openapi.ApiResponse({ status: 201 }),
+    tslib_1.__param(0, (0, org_from_request_1.GetOrgFromRequest)()),
+    tslib_1.__param(1, (0, common_1.Param)('id')),
+    tslib_1.__param(2, (0, common_1.Body)('active')),
+    tslib_1.__metadata("design:type", Function),
+    tslib_1.__metadata("design:paramtypes", [Object, String, Boolean]),
+    tslib_1.__metadata("design:returntype", Promise)
+], AutopostController.prototype, "changeActive", null);
+tslib_1.__decorate([
+    (0, common_1.Post)('/send'),
+    openapi.ApiResponse({ status: 201, type: Object }),
+    tslib_1.__param(0, (0, common_1.Query)('url')),
+    tslib_1.__metadata("design:type", Function),
+    tslib_1.__metadata("design:paramtypes", [String]),
+    tslib_1.__metadata("design:returntype", Promise)
+], AutopostController.prototype, "sendWebhook", null);
+exports.AutopostController = AutopostController = tslib_1.__decorate([
+    (0, swagger_1.ApiTags)('Autopost'),
+    (0, common_1.Controller)('/autopost'),
+    tslib_1.__metadata("design:paramtypes", [autopost_service_1.AutopostService])
+], AutopostController);
+
+
+/***/ }),
+/* 240 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.AutopostDto = exports.Integrations = void 0;
+const tslib_1 = __webpack_require__(1);
+const openapi = __webpack_require__(3);
+const class_validator_1 = __webpack_require__(142);
+const class_transformer_1 = __webpack_require__(181);
+class Integrations {
+    static _OPENAPI_METADATA_FACTORY() {
+        return { id: { required: true, type: () => String } };
+    }
+}
+exports.Integrations = Integrations;
+tslib_1.__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", String)
+], Integrations.prototype, "id", void 0);
+class AutopostDto {
+    static _OPENAPI_METADATA_FACTORY() {
+        return { title: { required: true, type: () => String }, content: { required: true, type: () => String }, lastUrl: { required: true, type: () => String }, onSlot: { required: true, type: () => Boolean }, syncLast: { required: true, type: () => Boolean }, url: { required: true, type: () => String }, active: { required: true, type: () => Boolean }, addPicture: { required: true, type: () => Boolean }, generateContent: { required: true, type: () => Boolean }, integrations: { required: true, type: () => [(__webpack_require__(240).Integrations)] } };
+    }
+}
+exports.AutopostDto = AutopostDto;
+tslib_1.__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", String)
+], AutopostDto.prototype, "title", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    tslib_1.__metadata("design:type", String)
+], AutopostDto.prototype, "content", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.IsOptional)(),
+    tslib_1.__metadata("design:type", String)
+], AutopostDto.prototype, "lastUrl", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", Boolean)
+], AutopostDto.prototype, "onSlot", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", Boolean)
+], AutopostDto.prototype, "syncLast", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsUrl)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", String)
+], AutopostDto.prototype, "url", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", Boolean)
+], AutopostDto.prototype, "active", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", Boolean)
+], AutopostDto.prototype, "addPicture", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsBoolean)(),
+    (0, class_validator_1.IsDefined)(),
+    tslib_1.__metadata("design:type", Boolean)
+], AutopostDto.prototype, "generateContent", void 0);
+tslib_1.__decorate([
+    (0, class_validator_1.IsArray)(),
+    (0, class_transformer_1.Type)(() => Integrations),
+    (0, class_validator_1.ValidateNested)({ each: true }),
+    tslib_1.__metadata("design:type", Array)
+], AutopostDto.prototype, "integrations", void 0);
+
+
+/***/ }),
+/* 241 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25007,7 +25719,7 @@ exports.BullMqModule = BullMqModule = tslib_1.__decorate([
 
 
 /***/ }),
-/* 235 */
+/* 242 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25015,7 +25727,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PluginModule = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const plugins_1 = tslib_1.__importDefault(__webpack_require__(236));
+const plugins_1 = tslib_1.__importDefault(__webpack_require__(243));
 let PluginModule = class PluginModule {
 };
 exports.PluginModule = PluginModule;
@@ -25033,16 +25745,39 @@ exports.PluginModule = PluginModule = tslib_1.__decorate([
 
 
 /***/ }),
-/* 236 */
-/***/ ((__unused_webpack_module, exports) => {
+/* 243 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports["default"] = [];
+const tslib_1 = __webpack_require__(1);
+const module_1 = tslib_1.__importDefault(__webpack_require__(244));
+exports["default"] = [module_1.default];
 
 
 /***/ }),
-/* 237 */
+/* 244 */
+/***/ ((__unused_webpack_module, exports, __webpack_require__) => {
+
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+const tslib_1 = __webpack_require__(1);
+const common_1 = __webpack_require__(5);
+let PublicApiBackendModule = class PublicApiBackendModule {
+};
+PublicApiBackendModule = tslib_1.__decorate([
+    (0, common_1.Module)({
+        imports: [],
+        controllers: [],
+        providers: [],
+        exports: []
+    })
+], PublicApiBackendModule);
+exports["default"] = PublicApiBackendModule;
+
+
+/***/ }),
+/* 245 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25050,17 +25785,17 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.PublicApiModule = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const auth_service_1 = __webpack_require__(136);
-const stripe_service_1 = __webpack_require__(106);
-const permissions_guard_1 = __webpack_require__(165);
-const permissions_service_1 = __webpack_require__(155);
+const auth_service_1 = __webpack_require__(144);
+const stripe_service_1 = __webpack_require__(107);
+const permissions_guard_1 = __webpack_require__(173);
+const permissions_service_1 = __webpack_require__(163);
 const integration_manager_1 = __webpack_require__(55);
-const upload_module_1 = __webpack_require__(207);
-const openai_service_1 = __webpack_require__(113);
-const extract_content_service_1 = __webpack_require__(125);
-const codes_service_1 = __webpack_require__(162);
-const public_integrations_controller_1 = __webpack_require__(238);
-const public_auth_middleware_1 = __webpack_require__(239);
+const upload_module_1 = __webpack_require__(212);
+const openai_service_1 = __webpack_require__(114);
+const extract_content_service_1 = __webpack_require__(127);
+const codes_service_1 = __webpack_require__(170);
+const public_integrations_controller_1 = __webpack_require__(246);
+const public_auth_middleware_1 = __webpack_require__(247);
 const authenticatedController = [
     public_integrations_controller_1.PublicIntegrationsController
 ];
@@ -25096,7 +25831,7 @@ exports.PublicApiModule = PublicApiModule = tslib_1.__decorate([
 
 
 /***/ }),
-/* 238 */
+/* 246 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25106,16 +25841,16 @@ const tslib_1 = __webpack_require__(1);
 const openapi = __webpack_require__(3);
 const common_1 = __webpack_require__(5);
 const swagger_1 = __webpack_require__(3);
-const org_from_request_1 = __webpack_require__(153);
+const org_from_request_1 = __webpack_require__(161);
 const integration_service_1 = __webpack_require__(43);
-const permissions_ability_1 = __webpack_require__(154);
-const permissions_service_1 = __webpack_require__(155);
-const create_post_dto_1 = __webpack_require__(178);
-const posts_service_1 = __webpack_require__(99);
-const platform_express_1 = __webpack_require__(205);
+const permissions_ability_1 = __webpack_require__(162);
+const permissions_service_1 = __webpack_require__(163);
+const create_post_dto_1 = __webpack_require__(186);
+const posts_service_1 = __webpack_require__(100);
+const platform_express_1 = __webpack_require__(210);
 const upload_factory_1 = __webpack_require__(45);
-const media_service_1 = __webpack_require__(111);
-const get_posts_dto_1 = __webpack_require__(191);
+const media_service_1 = __webpack_require__(112);
+const get_posts_dto_1 = __webpack_require__(199);
 let PublicIntegrationsController = class PublicIntegrationsController {
     constructor(_integrationService, _postsService, _mediaService) {
         this._integrationService = _integrationService;
@@ -25219,7 +25954,7 @@ exports.PublicIntegrationsController = PublicIntegrationsController = tslib_1.__
 
 
 /***/ }),
-/* 239 */
+/* 247 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25228,7 +25963,7 @@ exports.PublicAuthMiddleware = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
 const organization_service_1 = __webpack_require__(17);
-const exception_filter_1 = __webpack_require__(159);
+const exception_filter_1 = __webpack_require__(167);
 let PublicAuthMiddleware = class PublicAuthMiddleware {
     constructor(_organizationService) {
         this._organizationService = _organizationService;
@@ -25267,14 +26002,14 @@ exports.PublicAuthMiddleware = PublicAuthMiddleware = tslib_1.__decorate([
 
 
 /***/ }),
-/* 240 */
+/* 248 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ThrottlerBehindProxyGuard = void 0;
 const tslib_1 = __webpack_require__(1);
-const throttler_1 = __webpack_require__(241);
+const throttler_1 = __webpack_require__(249);
 const common_1 = __webpack_require__(5);
 let ThrottlerBehindProxyGuard = class ThrottlerBehindProxyGuard extends throttler_1.ThrottlerGuard {
     async canActivate(context) {
@@ -25294,13 +26029,13 @@ exports.ThrottlerBehindProxyGuard = ThrottlerBehindProxyGuard = tslib_1.__decora
 
 
 /***/ }),
-/* 241 */
+/* 249 */
 /***/ ((module) => {
 
 module.exports = require("@nestjs/throttler");
 
 /***/ }),
-/* 242 */
+/* 250 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25308,8 +26043,8 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.AgentModule = void 0;
 const tslib_1 = __webpack_require__(1);
 const common_1 = __webpack_require__(5);
-const agent_graph_service_1 = __webpack_require__(194);
-const agent_graph_insert_service_1 = __webpack_require__(226);
+const agent_graph_service_1 = __webpack_require__(202);
+const agent_graph_insert_service_1 = __webpack_require__(231);
 let AgentModule = class AgentModule {
 };
 exports.AgentModule = AgentModule;
@@ -25325,7 +26060,7 @@ exports.AgentModule = AgentModule = tslib_1.__decorate([
 
 
 /***/ }),
-/* 243 */
+/* 251 */
 /***/ ((__unused_webpack_module, exports, __webpack_require__) => {
 
 
@@ -25333,7 +26068,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.ConfigurationChecker = void 0;
 const tslib_1 = __webpack_require__(1);
 const fs_1 = __webpack_require__(53);
-const dotenv = tslib_1.__importStar(__webpack_require__(244));
+const dotenv = tslib_1.__importStar(__webpack_require__(252));
 const path_1 = __webpack_require__(54);
 class ConfigurationChecker {
     constructor() {
@@ -25425,7 +26160,7 @@ exports.ConfigurationChecker = ConfigurationChecker;
 
 
 /***/ }),
-/* 244 */
+/* 252 */
 /***/ ((module) => {
 
 module.exports = require("dotenv");
@@ -25471,15 +26206,19 @@ const cookie_parser_1 = tslib_1.__importDefault(__webpack_require__(4));
 const common_1 = __webpack_require__(5);
 const core_1 = __webpack_require__(6);
 const app_module_1 = __webpack_require__(7);
-const subscription_exception_1 = __webpack_require__(166);
-const exception_filter_1 = __webpack_require__(159);
-const configuration_checker_1 = __webpack_require__(243);
+const subscription_exception_1 = __webpack_require__(174);
+const exception_filter_1 = __webpack_require__(167);
+const configuration_checker_1 = __webpack_require__(251);
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule, {
         rawBody: true,
         cors: {
             origin: [
                 process.env.FRONTEND_URL,
+                'http://localhost:3001',
+                'http://localhost:3000',
+                'http://localhost:4200',
+                'https://linkedio.io',
                 ...(process.env.MAIN_URL ? [process.env.MAIN_URL] : []),
             ],
             credentials: true,
