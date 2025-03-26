@@ -5,7 +5,7 @@ if [ -f /app/custom-files/main.js ]; then
   echo "Copying custom main.js file..."
   # Create directory structure if it doesn't exist
   mkdir -p /app/dist/apps/backend/
-  cp -f /app/custom-files/main.js /app/dist/apps/backend/main.js
+  cp /app/custom-files/main.js /app/dist/apps/backend/main.js
   echo "Custom main.js file copied successfully."
 fi
 
@@ -14,7 +14,7 @@ if [ -f /app/custom-files/colors.scss ]; then
   echo "Copying custom colors.scss file..."
   # Create directory structure if it doesn't exist
   mkdir -p /app/apps/frontend/src/app/
-  cp -f /app/custom-files/colors.scss /app/apps/frontend/src/app/colors.scss
+  cp /app/custom-files/colors.scss /app/apps/frontend/src/app/colors.scss
   echo "Custom colors.scss file copied successfully."
 fi
 
